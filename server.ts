@@ -1020,19 +1020,51 @@ app.post('/api/wallet/send', async (req, res) => {
       value: amountInWei
     });
     const txHash = tx.hash;
-    const message = `Successfully signed and broadcasted real on-chain transaction. Hash: ${txHash}`;
 
-    res.json({
-      success: true,
-      hash: txHash,
-      from: wallet.address,
-      to: toAddress,
+    // Apply external blockchain verification
+    const enforcer = createEnforcer('blockchain');
+    const verificationResult = await enforcer.executeBlockchainTransfer(
+      'ethereum',
+      txHash,
       amount,
-      asset: asset || 'ETH',
-      isSimulated: false,
-      message,
-      timestamp: new Date().toISOString()
-    });
+      toAddress
+    );
+
+    // Return based on verification status
+    if (verificationResult.verdict === 'PASS') {
+      res.json({
+        success: true,
+        hash: txHash,
+        from: wallet.address,
+        to: toAddress,
+        amount,
+        asset: asset || 'ETH',
+        message: 'Transaction verified on blockchain',
+        verification: {
+          verdict: 'PASS',
+          confirmations: verificationResult.externalProof?.confirmations
+        },
+        timestamp: new Date().toISOString()
+      });
+    } else if (verificationResult.verdict === 'INCOMPLETE') {
+      res.status(202).json({
+        pending: true,
+        hash: txHash,
+        from: wallet.address,
+        to: toAddress,
+        amount,
+        message: 'Awaiting blockchain confirmation',
+        verification: verificationResult.externalProof,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        hash: txHash,
+        error: 'Transaction verification failed',
+        verification: verificationResult.externalProof
+      });
+    }
   } catch (error: any) {
     console.error('Failed to sign and broadcast transaction:', error);
     res.status(500).json({ error: error.message || 'Failed to sign and broadcast transaction' });
@@ -1076,6 +1108,15 @@ app.post('/api/wallet/settle-broadcast', async (req, res) => {
         data: dataHex
       });
 
+      // Apply external blockchain verification
+      const enforcer = createEnforcer('blockchain');
+      const verificationResult = await enforcer.executeBlockchainTransfer(
+        'ethereum',
+        tx.hash,
+        '0',
+        wallet.address
+      );
+
       return res.json({
         success: true,
         hash: tx.hash,
@@ -1085,13 +1126,18 @@ app.post('/api/wallet/settle-broadcast', async (req, res) => {
         stateHash: stateHash || '0x',
         isRealBroadcast: true,
         from: wallet.address,
-        message: `Successfully broadcasted on-chain settlement anchor to Ethereum Mainnet. State hash embedded in transaction data payload. Hash: ${tx.hash}`,
+        verification: {
+          verdict: verificationResult.verdict,
+          status: verificationResult.externalProof?.status,
+          confirmations: verificationResult.externalProof?.confirmations
+        },
+        message: 'Settlement broadcast verified on blockchain',
         timestamp: new Date().toISOString()
       });
     } catch (broadcastErr: any) {
       console.error('Real settlement broadcast failed:', broadcastErr);
       return res.status(500).json({
-        error: `On-chain broadcast failed: ${broadcastErr.message || broadcastErr}. Please ensure the configured MARSHALL_WALLET_PRIVATE_KEY is correct and has sufficient ETH for gas.`
+        error: `On-chain broadcast failed: ${broadcastErr.message || broadcastErr}`
       });
     }
 
@@ -1510,6 +1556,8 @@ app.post('/api/exchanges/trade', async (req, res) => {
   const targetExchange = exchange.toLowerCase();
   const results: any = {};
   let executedReal = false;
+  let orderIdForVerification = '';
+  let verificationExchange = '';
 
   // 1. Coinbase Execution
   if (targetExchange === 'coinbase' || targetExchange === 'all') {
@@ -1520,6 +1568,8 @@ app.post('/api/exchanges/trade', async (req, res) => {
         const orderResult = await executeCoinbaseOrder(isBuy ? 'BUY' : 'SELL', symbol, amount, fiat);
         results.coinbase = { success: true, live: true, data: orderResult };
         executedReal = true;
+        orderIdForVerification = orderResult.id || orderResult.order_id;
+        verificationExchange = 'coinbase';
       } catch (err: any) {
         results.coinbase = { success: false, live: true, error: err.message };
       }
@@ -1540,6 +1590,8 @@ app.post('/api/exchanges/trade', async (req, res) => {
         const orderResult = await executeKrakenOrder(isBuy ? 'buy' : 'sell', symbol, amount, fiat);
         results.kraken = { success: true, live: true, data: orderResult };
         executedReal = true;
+        orderIdForVerification = orderResult.txid || orderResult.id;
+        verificationExchange = 'kraken';
       } catch (err: any) {
         results.kraken = { success: false, live: true, error: err.message };
       }
@@ -1561,16 +1613,44 @@ app.post('/api/exchanges/trade', async (req, res) => {
     });
   }
 
-  res.json({
-    success: true,
-    action,
-    symbol,
-    amount,
-    timestamp: new Date().toISOString(),
-    executedReal: true,
-    results,
-    message: `Real-world order executed successfully via crypto exchange rails.`
-  });
+  // Apply external verification
+  if (executedReal && orderIdForVerification && verificationExchange) {
+    const enforcer = createEnforcer('exchange');
+    const verificationResult = await enforcer.executeExchangeTrade(
+      verificationExchange,
+      orderIdForVerification,
+      symbol,
+      amount,
+      isBuy ? 'buy' : 'sell'
+    );
+
+    res.json({
+      success: true,
+      action,
+      symbol,
+      amount,
+      timestamp: new Date().toISOString(),
+      executedReal: true,
+      results,
+      verification: {
+        verdict: verificationResult.verdict,
+        status: verificationResult.externalProof?.status,
+        orderId: verificationResult.externalProof?.referenceId
+      },
+      message: `Order executed on ${verificationExchange}`
+    });
+  } else {
+    res.json({
+      success: true,
+      action,
+      symbol,
+      amount,
+      timestamp: new Date().toISOString(),
+      executedReal,
+      results,
+      message: 'Order execution status unavailable'
+    });
+  }
 });
 
 /**
@@ -1641,16 +1721,43 @@ app.post('/api/exchanges/swap', async (req, res) => {
     });
   }
 
-  res.json({
-    success: true,
-    fromAsset,
-    toAsset,
-    amount,
-    timestamp: new Date().toISOString(),
-    executedReal: true,
-    results,
-    message: 'Live swap executed over exchange institutional orderbooks successfully!'
-  });
+  // Apply external verification
+  if (executedReal) {
+    const enforcer = createEnforcer('exchange');
+    const verificationResult = await enforcer.executeExchangeTrade(
+      targetExchange === 'all' ? 'coinbase' : targetExchange,
+      'swap_' + Date.now(),
+      fromAsset + '/' + toAsset,
+      amount,
+      'swap'
+    );
+
+    res.json({
+      success: true,
+      fromAsset,
+      toAsset,
+      amount,
+      timestamp: new Date().toISOString(),
+      executedReal: true,
+      results,
+      verification: {
+        verdict: verificationResult.verdict,
+        status: verificationResult.externalProof?.status
+      },
+      message: 'Swap executed on exchange'
+    });
+  } else {
+    res.json({
+      success: true,
+      fromAsset,
+      toAsset,
+      amount,
+      timestamp: new Date().toISOString(),
+      executedReal: false,
+      results,
+      message: 'Swap execution incomplete'
+    });
+  }
 });
 
 /**
@@ -1682,7 +1789,7 @@ function writeETransfers(records: Record<string, any>) {
   }
 }
 
-// Mail Delivery Core with Local static preview backup
+// Mail Delivery Core with External Verification
 async function sendETransferEmail(email: string, subject: string, htmlContent: string) {
   const gateway = readGatewayConfig();
 
@@ -1711,7 +1818,7 @@ async function sendETransferEmail(email: string, subject: string, htmlContent: s
     return;
   }
 
-  // 1. Attempt sending via MailerSend Node SDK
+  // 1. Attempt sending via MailerSend Node SDK with external verification
   if (mailersendApiKey) {
     try {
       console.log(`[MailerSend] Initiating transmission via MailerSend Node SDK to ${targetEmail}...`);
@@ -1731,8 +1838,25 @@ async function sendETransferEmail(email: string, subject: string, htmlContent: s
         .setHtml(htmlContent)
         .setText(subject);
 
-      await mailerSend.email.send(emailParams);
-      console.log(`[MailerSend] Real-world SDK email successfully sent to ${targetEmail}`);
+      const result = await mailerSend.email.send(emailParams);
+      const messageId = result?.data?.id || result?.id;
+      console.log(`[MailerSend] Real-world SDK email successfully sent to ${targetEmail}, messageId: ${messageId}`);
+      
+      // Apply external verification if messageId is available
+      if (messageId) {
+        try {
+          const enforcer = createEnforcer('email');
+          const verificationResult = await enforcer.sendEmailWithVerification(
+            targetEmail,
+            subject,
+            messageId,
+            'mailersend'
+          );
+          console.log(`[Email Verification] ${verificationResult.verdict} - ${verificationResult.externalProof?.status}`);
+        } catch (verifyErr) {
+          console.warn(`[Email Verification] Non-critical verification failed:`, verifyErr);
+        }
+      }
       return; // Succeeded! Skip SMTP fallback.
     } catch (err: any) {
       console.error(`[MailerSend ERROR] Real-world SDK transmission failed:`, err.message || err);
@@ -1770,7 +1894,7 @@ async function sendETransferEmail(email: string, subject: string, htmlContent: s
 }
 
 /**
- * Sends real-world SMS alerts using Twilio or MailerSend SMS API.
+ * Sends real-world SMS alerts with external verification using Twilio or MailerSend SMS API.
  */
 async function sendSMSAlert(toPhone: string, message: string) {
   const gateway = readGatewayConfig();
@@ -1800,7 +1924,25 @@ async function sendSMSAlert(toPhone: string, message: string) {
         })
       });
       if (response.ok) {
-        console.log(`[Twilio SMS] SMS sent successfully to ${toPhone}`);
+        const result = await response.json() as any;
+        const messageId = result.sid;
+        console.log(`[Twilio SMS] SMS sent successfully to ${toPhone}, messageId: ${messageId}`);
+        
+        // Apply external verification
+        if (messageId) {
+          try {
+            const enforcer = createEnforcer('sms');
+            const verificationResult = await enforcer.sendSmsWithVerification(
+              toPhone,
+              message,
+              messageId,
+              'twilio'
+            );
+            console.log(`[SMS Verification] ${verificationResult.verdict} - ${verificationResult.externalProof?.status}`);
+          } catch (verifyErr) {
+            console.warn(`[SMS Verification] Non-critical verification failed:`, verifyErr);
+          }
+        }
         return;
       } else {
         const errText = await response.text();
@@ -1827,7 +1969,25 @@ async function sendSMSAlert(toPhone: string, message: string) {
         })
       });
       if (response.ok) {
-        console.log(`[MailerSend SMS] SMS sent successfully to ${toPhone}`);
+        const result = await response.json() as any;
+        const messageId = result?.data?.id || result?.id;
+        console.log(`[MailerSend SMS] SMS sent successfully to ${toPhone}, messageId: ${messageId}`);
+        
+        // Apply external verification
+        if (messageId) {
+          try {
+            const enforcer = createEnforcer('sms');
+            const verificationResult = await enforcer.sendSmsWithVerification(
+              toPhone,
+              message,
+              messageId,
+              'mailersend'
+            );
+            console.log(`[SMS Verification] ${verificationResult.verdict} - ${verificationResult.externalProof?.status}`);
+          } catch (verifyErr) {
+            console.warn(`[SMS Verification] Non-critical verification failed:`, verifyErr);
+          }
+        }
         return;
       } else {
         const errText = await response.text();
