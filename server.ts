@@ -3597,15 +3597,25 @@ function generateAtmLocations(
   hours: string;
   supportedCurrencies: string[];
 }> {
-  // Real ATM networks that support withdrawal
-  const atmNetworks = [
+  // Real ATM networks - traditional cash
+  const cashAtmNetworks = [
     { name: 'Allpoint', id: 'allpoint' },
     { name: 'MoneyPass', id: 'moneypass' },
     { name: 'CIRRUS', id: 'cirrus' },
     { name: 'Plus', id: 'plus' }
   ];
 
-  const atmNames = [
+  // Real Bitcoin ATM networks
+  const bitcoinAtmNetworks = [
+    { name: 'Bitcoin Depot', id: 'bitcoin_depot' },
+    { name: 'Coinbase ATM', id: 'coinbase_atm' },
+    { name: 'BTM (Bitcoin ATM)', id: 'btm' },
+    { name: 'CoinFlip', id: 'coinflip' },
+    { name: 'RoboTeller', id: 'roboteller' },
+    { name: 'Crypto Dispensers', id: 'crypto_dispensers' }
+  ];
+
+  const cashAtmNames = [
     'TD Bank ATM',
     'RBC Royal Bank ATM',
     'Scotiabank ATM',
@@ -3620,11 +3630,24 @@ function generateAtmLocations(
     'Interac ATM'
   ];
 
-  const services = ['Withdrawal', 'Deposit', 'Balance Inquiry', 'PIN Change'];
+  const bitcoinAtmNames = [
+    'Bitcoin Depot ATM',
+    'Coinbase Bitcoin ATM',
+    'CoinFlip Bitcoin ATM',
+    'BTM - Buy Bitcoin Here',
+    'RoboTeller Bitcoin ATM',
+    'Crypto Dispensers ATM',
+    'Bitcoin ATM Machine',
+    'Digital Currency ATM'
+  ];
+
+  const cashServices = ['Withdrawal', 'Deposit', 'Balance Inquiry', 'PIN Change'];
+  const bitcoinServices = ['Buy Bitcoin', 'Sell Bitcoin', 'Check Price', '24/7 Available'];
   const atms = [];
 
-  // Generate 8-12 ATMs within radius
-  const count = 8 + Math.floor(Math.random() * 5);
+  // Generate 10-15 total ATMs within radius (mix of cash and Bitcoin)
+  const count = 10 + Math.floor(Math.random() * 6);
+  const bitcoinCount = Math.floor(count * 0.4); // ~40% Bitcoin ATMs, ~60% cash ATMs
   
   for (let i = 0; i < count; i++) {
     // Random coordinates within radius
@@ -3638,22 +3661,42 @@ function generateAtmLocations(
     const atmLat = userLat + latDelta;
     const atmLng = userLng + lngDelta;
     
-    const network = atmNetworks[Math.floor(Math.random() * atmNetworks.length)];
     const distanceKm = Math.sqrt(latDelta * latDelta + lngDelta * lngDelta) * 111;
+    
+    // Determine if Bitcoin or Cash ATM
+    const isBitcoinAtm = i < bitcoinCount;
 
-    atms.push({
-      id: `atm_${i}_${Date.now()}`,
-      name: atmNames[Math.floor(Math.random() * atmNames.length)],
-      address: generateRandomAddress(),
-      distance: parseFloat(distanceKm.toFixed(1)),
-      latitude: atmLat,
-      longitude: atmLng,
-      network: network.name,
-      availableServices: ['Withdrawal', 'Balance Inquiry', ...services.slice(2)],
-      isOpen: Math.random() > 0.1, // 90% chance open
-      hours: '24/7',
-      supportedCurrencies: ['CAD', 'USD']
-    });
+    if (isBitcoinAtm) {
+      const network = bitcoinAtmNetworks[Math.floor(Math.random() * bitcoinAtmNetworks.length)];
+      atms.push({
+        id: `btm_${i}_${Date.now()}`,
+        name: bitcoinAtmNames[Math.floor(Math.random() * bitcoinAtmNames.length)],
+        address: generateRandomAddress(),
+        distance: parseFloat(distanceKm.toFixed(1)),
+        latitude: atmLat,
+        longitude: atmLng,
+        network: network.name,
+        availableServices: bitcoinServices,
+        isOpen: Math.random() > 0.05, // 95% chance open for Bitcoin ATMs (always operating)
+        hours: '24/7',
+        supportedCurrencies: ['BTC', 'USD', 'CAD']
+      });
+    } else {
+      const network = cashAtmNetworks[Math.floor(Math.random() * cashAtmNetworks.length)];
+      atms.push({
+        id: `atm_${i}_${Date.now()}`,
+        name: cashAtmNames[Math.floor(Math.random() * cashAtmNames.length)],
+        address: generateRandomAddress(),
+        distance: parseFloat(distanceKm.toFixed(1)),
+        latitude: atmLat,
+        longitude: atmLng,
+        network: network.name,
+        availableServices: ['Withdrawal', 'Balance Inquiry', ...cashServices.slice(2)],
+        isOpen: Math.random() > 0.1, // 90% chance open
+        hours: '24/7',
+        supportedCurrencies: ['CAD', 'USD']
+      });
+    }
   }
 
   // Sort by distance
