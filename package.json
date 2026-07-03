@@ -8,7 +8,10 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:verify": "tsx scripts/test-verification-system.ts",
+    "ledger:backup": "tsx scripts/backup-ledger.ts",
+    "cert:pdf": "tsx scripts/generate-pdf.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -17,7 +20,9 @@
     "dotenv": "^17.2.3",
     "ethers": "^6.17.0",
     "express": "^4.21.2",
+    "express-rate-limit": "^8.5.2",
     "firebase": "^12.15.0",
+    "helmet": "^8.2.0",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.546.0",
     "mailersend": "^3.0.0",
