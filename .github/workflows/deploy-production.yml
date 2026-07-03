@@ -1,0 +1,60 @@
+name: Deploy to www.sovereigns.ca
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_RESTART_COMMAND: ${{ secrets.DEPLOY_RESTART_COMMAND }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || '22' }}
+          envs: DEPLOY_RESTART_COMMAND
+          script_stop: true
+          script: |
+            set -e
+            cd "${{ secrets.DEPLOY_PATH }}"
+
+            git fetch origin main
+            git checkout main
+            git pull --ff-only origin main
+
+            npm ci
+            npm run build
+
+            if [ -n "$DEPLOY_RESTART_COMMAND" ]; then
+              echo "Running custom restart command"
+              eval "$DEPLOY_RESTART_COMMAND"
+            elif command -v pm2 >/dev/null 2>&1; then
+              echo "Restarting with PM2"
+              pm2 restart sovereign-wealth-terminal || pm2 start dist/server.cjs --name sovereign-wealth-terminal
+              pm2 save
+            elif command -v systemctl >/dev/null 2>&1; then
+              echo "Restarting systemd service"
+              sudo systemctl restart sovereigns
+            else
+              echo "No process manager found; starting node in background"
+              pkill -f "node dist/server.cjs" || true
+              nohup npm run start >/tmp/sovereigns.log 2>&1 &
+            fi
+
+            echo "Deployment finished successfully"

@@ -4,6 +4,29 @@
 
 Your app is already running at **www.sovereigns.ca**. To complete the security setup with SSL and Nginx:
 
+## Automatic Deploy on Git Push
+
+Pushes to `main` now support automatic deployment through GitHub Actions.
+
+Workflow file:
+- `.github/workflows/deploy-production.yml`
+
+Required GitHub repository secrets:
+- `DEPLOY_HOST`: Server IP or hostname
+- `DEPLOY_USER`: SSH username
+- `DEPLOY_SSH_KEY`: Private SSH key for that server user
+- `DEPLOY_PATH`: Absolute path to your app on server (example: `/var/www/sovereigns`)
+- `DEPLOY_PORT` (optional): SSH port (defaults to `22`)
+- `DEPLOY_RESTART_COMMAND` (optional): Custom restart command (example: `sudo systemctl restart sovereigns`)
+
+What happens on each push to `main`:
+1. Connects to your server via SSH.
+2. Pulls latest code from `origin/main`.
+3. Runs `npm ci` and `npm run build`.
+4. Restarts the app using custom command, PM2, or systemd fallback.
+
+If the workflow fails, your running production app remains on the previous successful deployment.
+
 ### On Your Linux Server:
 
 1. **Clone or pull the latest code:**
