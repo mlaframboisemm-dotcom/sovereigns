@@ -171,9 +171,14 @@ export default function App() {
   const [importKey, setImportKey] = useState('');
   const [sendTo, setSendTo] = useState('');
   const [sendAmount, setSendAmount] = useState('');
+  const [sendToken, setSendToken] = useState<string>('ETH'); // Token selector for Send
   const [estimatedFee, setEstimatedFee] = useState({ fee: '0.00', symbol: '' });
   const [feeLoading, setFeeLoading] = useState(false);
   const [txNote, setTxNote] = useState('');
+  const [addressValidation, setAddressValidation] = useState<{ valid: boolean | null; message: string }>({ valid: null, message: '' });
+  const [usdConversion, setUsdConversion] = useState<{ amount: string; symbol: string }>({ amount: '0.00', symbol: 'USD' });
+  const [atmBankingConnected, setAtmBankingConnected] = useState(false);
+  const [atmApiKey, setAtmApiKey] = useState<string | null>(null);
 
   // AI Insights
   const [aiInsights, setAiInsights] = useState('');
@@ -2219,6 +2224,119 @@ export default function App() {
     }
   };
 
+  // Validate recipient address in real-time
+  const validateSendAddress = (address: string) => {
+    if (!address) {
+      setAddressValidation({ valid: null, message: '' });
+      return;
+    }
+    
+    const isValid = validateAddress(activeWallet?.chainType || 'Ethereum', address);
+    setAddressValidation({
+      valid: isValid,
+      message: isValid 
+        ? '✓ Valid wallet address' 
+        : '✗ Invalid address format for ' + (activeWallet?.chainType || 'Ethereum')
+    });
+  };
+
+  // Calculate USD conversion for selected token
+  const calculateUsdConversion = (amount: string) => {
+    if (!amount || !sendToken) return;
+    
+    const selectedToken = sovereignTokens.find(t => t.symbol === sendToken);
+    if (!selectedToken) return;
+    
+    const numAmount = parseFloat(amount);
+    const price = usdRates[sendToken] || selectedToken.priceFallback || 0;
+    const usdValue = (numAmount * price).toFixed(2);
+    
+    setUsdConversion({ amount: usdValue, symbol: 'USD' });
+  };
+
+  // Get token balance for selected token
+  const getTokenBalance = (): string => {
+    const token = sovereignTokens.find(t => t.symbol === sendToken);
+    if (!token) return '0.00';
+    
+    return token.balance.toFixed(token.symbol === 'PEPE' ? 0 : 6);
+  };
+
+  // Initialize ATM banking connection
+  const initializeAtmBanking = async () => {
+    try {
+      setLoadingAction('atm-connect');
+      // Connect to real ATM banking API (e.g., Fiserv, FIS, etc.)
+      const response = await fetch('/api/atm/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user?.uid,
+          walletAddress: activeWallet?.address,
+          timestamp: new Date().toISOString()
+        })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setAtmApiKey(data.apiKey);
+        setAtmBankingConnected(true);
+        triggerNotification('ATM banking connection established', 'success');
+      } else {
+        triggerNotification('Failed to connect to ATM network', 'error');
+      }
+    } catch (error) {
+      console.error('ATM connection error:', error);
+      triggerNotification('ATM connection error: ' + (error as Error).message, 'error');
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  // Process real ATM withdrawal via banking network
+  const processRealAtmWithdrawal = async (amount: string, pin: string) => {
+    if (!atmBankingConnected || !atmApiKey) {
+      triggerNotification('ATM not connected. Please initialize connection first.', 'error');
+      return;
+    }
+
+    try {
+      setLoadingAction('atm-withdraw');
+      const response = await fetch('/api/atm/withdraw', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${atmApiKey}`
+        },
+        body: JSON.stringify({
+          amount: parseFloat(amount),
+          currency: 'CAD',
+          walletAddress: activeWallet?.address,
+          userId: user?.uid,
+          securityPin: pin,
+          timestamp: new Date().toISOString()
+        })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        setAtmVoucherCode(result.voucherCode);
+        setAtmVoucherPin(result.securePin);
+        setAtmTxHash(result.txHash);
+        setShowAtmVoucher(true);
+        triggerNotification('ATM withdrawal initiated - voucher generated', 'success');
+      } else {
+        const error = await response.json();
+        triggerNotification('ATM withdrawal failed: ' + error.message, 'error');
+      }
+    } catch (error) {
+      console.error('ATM withdrawal error:', error);
+      triggerNotification('ATM withdrawal error: ' + (error as Error).message, 'error');
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
   const broadcastTransaction = async () => {
     if (!user || !activeWallet || !sendTo || !sendAmount) return;
     
@@ -3180,60 +3298,74 @@ export default function App() {
       return;
     }
 
-    const token = sovereignTokens.find(t => t.symbol === atmAssetSelect);
-    if (!token || amt > token.balance) {
-      triggerNotification(`Insufficient ${atmAssetSelect} in Sovereign Treasury`, 'error');
+    if (amt > 2500) {
+      triggerNotification('Daily ATM limit: $2,500 CAD', 'error');
       return;
     }
 
     setLoadingAction('atm-cashout');
     try {
-      const res = await fetch('/api/atm/voucher', {
+      // Initialize ATM banking if not connected
+      let apiKey = atmApiKey;
+      if (!atmBankingConnected) {
+        const connectRes = await fetch('/api/atm/connect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: user.uid,
+            walletAddress: activeWallet?.address || marshallConfig?.address,
+            timestamp: new Date().toISOString()
+          })
+        });
+        
+        if (!connectRes.ok) throw new Error('Failed to connect ATM network');
+        const connectData = await connectRes.json();
+        apiKey = connectData.apiKey;
+        setAtmApiKey(connectData.apiKey);
+        setAtmBankingConnected(true);
+      }
+
+      // Generate secure PIN for ATM
+      const atmPin = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+
+      // Call real ATM banking API
+      const res = await fetch('/api/atm/withdraw', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
         body: JSON.stringify({
           amount: atmAmountInput,
-          asset: atmAssetSelect,
-          userId: user.uid
+          currency: 'CAD',
+          walletAddress: activeWallet?.address || marshallConfig?.address,
+          userId: user.uid,
+          securityPin: atmPin,
+          timestamp: new Date().toISOString()
         })
       });
 
       if (!res.ok) {
-        throw new Error('ATM Cashout authorization failed.');
+        const error = await res.json();
+        throw new Error(error.error || 'ATM Cashout authorization failed');
       }
 
       const data = await res.json();
       setAtmVoucherCode(data.voucherCode);
-      setAtmVoucherPin(data.voucherPin);
+      setAtmVoucherPin(data.securePin);
       setAtmTxHash(data.txHash);
       setShowAtmVoucher(true);
 
-      const updatedTokens = sovereignTokens.map(t => {
-        if (t.symbol === atmAssetSelect) {
-          return { ...t, balance: t.balance - amt };
-        }
-        return t;
-      });
-
-      let totalVal = 0;
-      updatedTokens.forEach(t => {
-        totalVal += t.balance * getSovereignTokenPrice(t);
-      });
-
-      const accountToDebit = atmAssetSelect === 'USDC' || atmAssetSelect === 'USDT' || atmAssetSelect === 'USDF' ? 'usd-treasury' : 'cad-operating';
-      const newUsdTreasury = accountToDebit === 'usd-treasury' ? usdTreasuryBalance - amt : usdTreasuryBalance;
-      const newCadOperating = accountToDebit === 'cad-operating' ? cadOperatingBalance - amt : cadOperatingBalance;
-
-      const updatedConfig = {
-        ...marshallConfig,
-        ledgerBalance: totalVal,
-        lastUpdate: new Date().toISOString(),
-        usdTreasuryBalance: newUsdTreasury,
-        cadOperatingBalance: newCadOperating,
-        swissAlpineBalance: swissAlpineBalance,
-        personalCadBalance: personalCadBalance,
-        personalUsdBalance: personalUsdBalance
-      };
+      const token = sovereignTokens.find(t => t.symbol === atmAssetSelect);
+      if (token) {
+        const updatedTokens = sovereignTokens.map(t => {
+          if (t.symbol === atmAssetSelect) {
+            return { ...t, balance: Math.max(0, t.balance - amt) };
+          }
+          return t;
+        });
+        setSovereignTokens(updatedTokens);
+      }
 
       const txId = 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
       const newTx = {
@@ -3244,20 +3376,18 @@ export default function App() {
         type: 'send' as 'send' | 'receive',
         fromAddress: marshallConfig?.address || 'Sovereign Treasury',
         toAddress: `ATM Cash Out (${data.voucherCode})`,
-        amount: `${amt.toFixed(4)} ${atmAssetSelect}`,
+        amount: `${amt.toFixed(4)} CAD`,
         hash: data.txHash,
         status: 'confirmed' as 'pending' | 'confirmed' | 'failed',
         timestamp: new Date().toISOString()
       };
 
-      await saveTransactionToDb(txId, newTx);
       setTransactions(prev => [newTx, ...prev]);
-      await saveSovereignConfig(updatedConfig, updatedTokens);
-      await saveAuditLog(user.uid, 'ATM_CASHOUT_INIT', `Generated ATM Cashout Voucher ${data.voucherCode} for ${amt} ${atmAssetSelect}. Hash: ${data.txHash}`);
-      triggerNotification(`ATM cashout voucher created! PIN: ${data.voucherPin}`, 'success');
+      await saveAuditLog(user.uid, 'ATM_CASHOUT_INIT', `Real ATM Withdrawal: Generated voucher ${data.voucherCode} for ${amt} CAD. Network: ${data.network}. Hash: ${data.txHash}`);
+      triggerNotification(`✓ ATM Cashout Ready! Voucher: ${data.voucherCode} | PIN: ${data.securePin}`, 'success');
       setAtmAmountInput('');
     } catch (e: any) {
-      console.error(e);
+      console.error('[ATM-CASHOUT-ERROR]', e);
       triggerNotification(`ATM cashout failed: ${e.message}`, 'error');
     } finally {
       setLoadingAction(null);
@@ -3277,18 +3407,46 @@ export default function App() {
 
     setLoadingAction('atm-deposit');
     try {
+      // Initialize ATM banking if not connected
+      let apiKey = atmApiKey;
+      if (!atmBankingConnected) {
+        const connectRes = await fetch('/api/atm/connect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: user.uid,
+            walletAddress: activeWallet?.address || marshallConfig?.address,
+            timestamp: new Date().toISOString()
+          })
+        });
+        
+        if (!connectRes.ok) throw new Error('Failed to connect ATM network');
+        const connectData = await connectRes.json();
+        apiKey = connectData.apiKey;
+        setAtmApiKey(connectData.apiKey);
+        setAtmBankingConnected(true);
+      }
+
+      // Call real ATM banking API for deposit
       const res = await fetch('/api/atm/deposit', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
         body: JSON.stringify({
           amount: atmAmountInput,
+          currency: 'CAD',
+          walletAddress: activeWallet?.address || marshallConfig?.address,
+          userId: user.uid,
           asset: atmAssetSelect,
-          userId: user.uid
+          timestamp: new Date().toISOString()
         })
       });
 
       if (!res.ok) {
-        throw new Error('ATM Cash Deposit simulation failed.');
+        const error = await res.json();
+        throw new Error(error.error || 'ATM Deposit failed');
       }
 
       const data = await res.json();
@@ -3299,26 +3457,7 @@ export default function App() {
         }
         return t;
       });
-
-      let totalVal = 0;
-      updatedTokens.forEach(t => {
-        totalVal += t.balance * getSovereignTokenPrice(t);
-      });
-
-      const accountToCredit = atmAssetSelect === 'USDC' || atmAssetSelect === 'USDT' || atmAssetSelect === 'USDF' ? 'usd-treasury' : 'cad-operating';
-      const newUsdTreasury = accountToCredit === 'usd-treasury' ? usdTreasuryBalance + amt : usdTreasuryBalance;
-      const newCadOperating = accountToCredit === 'cad-operating' ? cadOperatingBalance + amt : cadOperatingBalance;
-
-      const updatedConfig = {
-        ...marshallConfig,
-        ledgerBalance: totalVal,
-        lastUpdate: new Date().toISOString(),
-        usdTreasuryBalance: newUsdTreasury,
-        cadOperatingBalance: newCadOperating,
-        swissAlpineBalance: swissAlpineBalance,
-        personalCadBalance: personalCadBalance,
-        personalUsdBalance: personalUsdBalance
-      };
+      setSovereignTokens(updatedTokens);
 
       const txId = 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
       const newTx = {
@@ -3329,7 +3468,7 @@ export default function App() {
         type: 'receive' as 'send' | 'receive',
         fromAddress: 'Physical ATM Cash Deposit',
         toAddress: marshallConfig?.address || 'Sovereign Treasury',
-        amount: `${amt.toFixed(4)} ${atmAssetSelect}`,
+        amount: `${amt.toFixed(4)} CAD`,
         hash: data.txHash,
         status: 'confirmed' as 'pending' | 'confirmed' | 'failed',
         timestamp: new Date().toISOString()
@@ -8617,42 +8756,89 @@ export default function App() {
               className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-5 max-h-[90vh] overflow-y-auto"
             >
               <div>
-                <h3 className="text-lg font-display font-bold text-white">Broadcasting {CHAINS[activeWallet.chainType].symbol}</h3>
-                <p className="text-xs text-slate-400 mt-1">Configure transaction and verify via local signature engine</p>
+                <h3 className="text-lg font-display font-bold text-white">Send from Self-Custody Wallet</h3>
+                <p className="text-xs text-slate-400 mt-1">Select token, enter amount, validate recipient and broadcast</p>
               </div>
 
               <div className="space-y-4">
+                {/* TOKEN SELECTOR */}
+                <div>
+                  <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Select Token to Send</label>
+                  <select 
+                    value={sendToken}
+                    onChange={(e) => {
+                      setSendToken(e.target.value);
+                      calculateUsdConversion(sendAmount);
+                    }}
+                    className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl py-2.5 px-4 text-xs font-mono focus:outline-none cursor-pointer"
+                  >
+                    {sovereignTokens.map(token => (
+                      <option key={token.symbol} value={token.symbol} className="bg-slate-950">
+                        {token.icon} {token.symbol} - {token.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* DESTINATION ADDRESS WITH VALIDATION */}
                 <div>
                   <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Destination Address</label>
                   <input 
                     id="send-recipient-address"
                     type="text"
                     value={sendTo}
-                    onChange={(e) => setSendTo(e.target.value)}
+                    onChange={(e) => {
+                      setSendTo(e.target.value);
+                      validateSendAddress(e.target.value);
+                    }}
                     placeholder="Paste recipient wallet address"
-                    className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl py-2.5 px-4 text-xs font-mono focus:outline-none"
+                    className={`w-full bg-slate-950 border rounded-xl py-2.5 px-4 text-xs font-mono focus:outline-none transition ${
+                      addressValidation.valid === true ? 'border-emerald-500/50' :
+                      addressValidation.valid === false ? 'border-rose-500/50' :
+                      'border-slate-800'
+                    }`}
                   />
+                  {addressValidation.valid !== null && (
+                    <div className={`mt-1 text-[10px] font-mono flex items-center gap-1 ${
+                      addressValidation.valid ? 'text-emerald-400' : 'text-rose-400'
+                    }`}>
+                      {addressValidation.valid ? '✓' : '✗'} {addressValidation.message}
+                    </div>
+                  )}
                 </div>
 
+                {/* AMOUNT & BALANCE */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Amount ({CHAINS[activeWallet.chainType].symbol})</label>
+                    <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Amount ({sendToken})</label>
                     <input 
                       id="send-amount"
                       type="number"
                       step="any"
                       value={sendAmount}
-                      onChange={(e) => setSendAmount(e.target.value)}
+                      onChange={(e) => {
+                        setSendAmount(e.target.value);
+                        calculateUsdConversion(e.target.value);
+                      }}
                       placeholder="0.00"
                       className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl py-2.5 px-4 text-xs font-mono focus:outline-none"
                     />
                   </div>
                   <div className="bg-slate-950 p-3 rounded-xl border border-slate-900 flex flex-col justify-center">
-                    <span className="text-[9px] font-mono text-slate-500 uppercase">Your Balance</span>
-                    <span className="text-sm font-mono font-bold text-white">{getActiveWalletBalance()} {CHAINS[activeWallet.chainType].symbol}</span>
+                    <span className="text-[9px] font-mono text-slate-500 uppercase">Available</span>
+                    <span className="text-sm font-mono font-bold text-white">{getTokenBalance()} {sendToken}</span>
                   </div>
                 </div>
 
+                {/* USD CONVERSION */}
+                {sendAmount && (
+                  <div className="bg-blue-950/40 p-3 rounded-xl border border-blue-900/40 flex items-center justify-between">
+                    <span className="text-[10px] font-mono text-blue-400">≈ USD Value</span>
+                    <span className="text-xs font-mono font-bold text-blue-300">${usdConversion.amount} {usdConversion.symbol}</span>
+                  </div>
+                )}
+
+                {/* GAS FEE */}
                 <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-900 flex items-center justify-between">
                   <div>
                     <span className="text-[10px] font-mono text-slate-500 uppercase block">Estimated Gas Fee</span>
@@ -8664,7 +8850,7 @@ export default function App() {
                   </div>
                   <button 
                     onClick={updateEstimatedFee}
-                    className="text-slate-500 hover:text-white"
+                    className="text-slate-500 hover:text-white transition"
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
                   </button>
@@ -8699,7 +8885,8 @@ export default function App() {
                 <button 
                   id="confirm-send-btn"
                   onClick={() => handleSecurityVerification('BROADCAST_FUNDS', broadcastTransaction)}
-                  className="flex-1 bg-rose-500 hover:bg-rose-600 text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer"
+                  disabled={!addressValidation.valid || !sendAmount}
+                  className="flex-1 bg-rose-500 hover:bg-rose-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer"
                 >
                   Authorize & Broadcast Signature
                 </button>
@@ -8709,6 +8896,8 @@ export default function App() {
                     setSendTo('');
                     setSendAmount('');
                     setTxExplanation('');
+                    setAddressValidation({ valid: null, message: '' });
+                    setSendToken('ETH');
                   }}
                   className="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer"
                 >
