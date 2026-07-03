@@ -66,7 +66,8 @@ import {
   X,
   ShieldAlert,
   CheckCircle,
-  Anchor
+  Anchor,
+  Map
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { jsPDF } from 'jspdf';
@@ -206,6 +207,26 @@ export default function App() {
   const [showAtmVoucher, setShowAtmVoucher] = useState(false);
   const [atmAmountInput, setAtmAmountInput] = useState('');
   const [atmAssetSelect, setAtmAssetSelect] = useState('USDC');
+  
+  // ATM Locator State
+  const [showAtmLocator, setShowAtmLocator] = useState(false);
+  const [atmLocations, setAtmLocations] = useState<Array<{
+    id: string;
+    name: string;
+    address: string;
+    distance: number; // km
+    latitude: number;
+    longitude: number;
+    network: string;
+    availableServices: string[];
+    isOpen: boolean;
+    hours: string;
+    supportedCurrencies: string[];
+  }>>([]);
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [loadingAtmLocations, setLoadingAtmLocations] = useState(false);
+  const [selectedAtm, setSelectedAtm] = useState<string | null>(null);
+  const [atmLocatorRadius, setAtmLocatorRadius] = useState(5); // km
   
   const [activeReconTab, setActiveReconTab] = useState<'exchanges' | 'yield' | 'gold' | 'delegation'>('exchanges');
   const [sovereignTokens, setSovereignTokens] = useState<typeof SOVEREIGN_TOKENS>(SOVEREIGN_TOKENS);
@@ -2334,6 +2355,77 @@ export default function App() {
       triggerNotification('ATM withdrawal error: ' + (error as Error).message, 'error');
     } finally {
       setLoadingAction(null);
+    }
+  };
+
+  // Fetch real ATM locations near user
+  const fetchAtmLocations = async () => {
+    try {
+      setLoadingAtmLocations(true);
+
+      // Request user's geolocation
+      if (!userLocation) {
+        return new Promise((resolve) => {
+          navigator.geolocation.getCurrentPosition(
+            async (position) => {
+              const loc = {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude
+              };
+              setUserLocation(loc);
+
+              // Fetch ATMs from backend
+              const res = await fetch('/api/atm/locator', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  latitude: loc.lat,
+                  longitude: loc.lng,
+                  radiusKm: atmLocatorRadius,
+                  userId: user?.uid
+                })
+              });
+
+              if (res.ok) {
+                const data = await res.json();
+                setAtmLocations(data.atms || []);
+                triggerNotification(`Found ${data.atms?.length || 0} ATMs near you`, 'success');
+              } else {
+                triggerNotification('Could not fetch ATM locations', 'error');
+              }
+              resolve(null);
+            },
+            (error) => {
+              console.error('Geolocation error:', error);
+              triggerNotification('Please enable location access to find nearby ATMs', 'error');
+              resolve(null);
+            }
+          );
+        });
+      } else {
+        // Use existing location
+        const res = await fetch('/api/atm/locator', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            latitude: userLocation.lat,
+            longitude: userLocation.lng,
+            radiusKm: atmLocatorRadius,
+            userId: user?.uid
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          setAtmLocations(data.atms || []);
+          triggerNotification(`Found ${data.atms?.length || 0} ATMs near you`, 'success');
+        }
+      }
+    } catch (error) {
+      console.error('ATM locator error:', error);
+      triggerNotification('Error fetching ATM locations: ' + (error as Error).message, 'error');
+    } finally {
+      setLoadingAtmLocations(false);
     }
   };
 
@@ -7684,6 +7776,14 @@ export default function App() {
                           </div>
 
                           <button
+                            onClick={() => setShowAtmLocator(true)}
+                            className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-xl text-xs font-mono tracking-wider w-full cursor-pointer transition shadow-lg shadow-blue-500/10 flex items-center justify-center gap-2 mb-3"
+                          >
+                            <Compass className="w-3.5 h-3.5" />
+                            FIND ATMs NEAR ME
+                          </button>
+
+                          <button
                             onClick={handleAtmCashout}
                             disabled={loadingAction === 'atm-cashout' || !atmAmountInput}
                             className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-bold py-3 px-6 rounded-xl text-xs font-mono tracking-wider w-full cursor-pointer transition shadow-lg shadow-amber-500/10 flex items-center justify-center gap-2"
@@ -8903,6 +9003,215 @@ export default function App() {
                 >
                   Cancel
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL 4B: ATM LOCATOR MAP */}
+      <AnimatePresence>
+        {showAtmLocator && (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="w-full max-w-4xl bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-5 max-h-[90vh] overflow-y-auto"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-display font-bold text-white">Find Nearby ATMs</h3>
+                  <p className="text-xs text-slate-400 mt-1">Real ATM locations from Allpoint network - withdraw cash instantly</p>
+                </div>
+                <button 
+                  onClick={() => setShowAtmLocator(false)}
+                  className="text-slate-400 hover:text-white"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {/* LEFT: Controls */}
+                <div className="lg:col-span-1 space-y-4">
+                  <div>
+                    <label className="block text-xs font-mono text-slate-400 uppercase mb-2">Search Radius</label>
+                    <div className="flex items-center gap-2">
+                      <input 
+                        type="range"
+                        min="1"
+                        max="25"
+                        value={atmLocatorRadius}
+                        onChange={(e) => setAtmLocatorRadius(parseInt(e.target.value))}
+                        className="flex-1"
+                      />
+                      <span className="text-xs font-mono text-white w-12">{atmLocatorRadius} km</span>
+                    </div>
+                  </div>
+
+                  <button 
+                    onClick={fetchAtmLocations}
+                    disabled={loadingAtmLocations}
+                    className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-bold py-2.5 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    {loadingAtmLocations ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        Searching...
+                      </>
+                    ) : (
+                      <>
+                        <Globe className="w-3.5 h-3.5" />
+                        Find ATMs Near Me
+                      </>
+                    )}
+                  </button>
+
+                  {/* ATM List */}
+                  <div className="space-y-2 max-h-96 overflow-y-auto">
+                    {atmLocations.length === 0 ? (
+                      <div className="text-center py-6">
+                        <Globe className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+                        <p className="text-[10px] text-slate-500">Click "Find ATMs Near Me" to locate withdrawal points</p>
+                      </div>
+                    ) : (
+                      atmLocations.map(atm => (
+                        <button
+                          key={atm.id}
+                          onClick={() => setSelectedAtm(atm.id)}
+                          className={`w-full p-3 rounded-xl text-left text-xs transition border ${
+                            selectedAtm === atm.id
+                              ? 'bg-amber-500/20 border-amber-500/50'
+                              : 'bg-slate-950 border-slate-800 hover:border-slate-700'
+                          }`}
+                        >
+                          <div className="font-bold text-white flex items-center justify-between">
+                            {atm.name}
+                            {atm.isOpen ? (
+                              <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-2 py-1 rounded">Open</span>
+                            ) : (
+                              <span className="text-[9px] bg-rose-500/20 text-rose-300 px-2 py-1 rounded">Closed</span>
+                            )}
+                          </div>
+                          <div className="text-[9px] text-slate-400 mt-1 truncate">{atm.address}</div>
+                          <div className="text-[9px] text-slate-500 mt-1 flex items-center gap-1">
+                            <Compass className="w-3 h-3" />
+                            {atm.distance} km away
+                          </div>
+                          <div className="text-[9px] text-slate-400 mt-1 flex items-center gap-1 flex-wrap">
+                            {atm.availableServices.map(s => (
+                              <span key={s} className="bg-slate-800 px-1.5 py-0.5 rounded">{s}</span>
+                            ))}
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                {/* RIGHT: Details & Map Area */}
+                <div className="lg:col-span-2 space-y-4">
+                  {selectedAtm ? (
+                    (() => {
+                      const atm = atmLocations.find(a => a.id === selectedAtm);
+                      return atm ? (
+                        <>
+                          {/* Map Placeholder */}
+                          <div className="bg-slate-950 rounded-xl border border-slate-800 h-64 flex items-center justify-center relative overflow-hidden">
+                            <div className="absolute inset-0 bg-gradient-to-br from-slate-900 to-slate-950"></div>
+                            <div className="text-center z-10">
+                              <Smartphone className="w-12 h-12 text-slate-600 mx-auto mb-2" />
+                              <p className="text-[10px] text-slate-500">Map view - {atm.name}</p>
+                              <p className="text-[10px] text-slate-600 mt-1">{atm.latitude.toFixed(4)}, {atm.longitude.toFixed(4)}</p>
+                            </div>
+                          </div>
+
+                          {/* ATM Details */}
+                          <div className="bg-slate-950 rounded-xl border border-slate-800 p-4 space-y-3">
+                            <div>
+                              <span className="text-[10px] text-slate-500 uppercase block">ATM Name</span>
+                              <span className="text-sm font-bold text-white">{atm.name}</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-slate-500 uppercase block">Address</span>
+                              <span className="text-sm font-mono text-slate-300">{atm.address}</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <span className="text-[10px] text-slate-500 uppercase block">Distance</span>
+                                <span className="text-sm font-bold text-amber-400">{atm.distance} km</span>
+                              </div>
+                              <div>
+                                <span className="text-[10px] text-slate-500 uppercase block">Status</span>
+                                <span className={`text-sm font-bold ${atm.isOpen ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                  {atm.isOpen ? 'Open Now' : 'Closed'}
+                                </span>
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-slate-500 uppercase block">Hours</span>
+                              <span className="text-sm font-mono text-slate-300">{atm.hours}</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-slate-500 uppercase block">Network</span>
+                              <span className="text-sm font-bold text-blue-400">{atm.network}</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-slate-500 uppercase block mb-2">Services</span>
+                              <div className="flex flex-wrap gap-2">
+                                {atm.availableServices.map(service => (
+                                  <span key={service} className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-1 rounded-lg font-mono">
+                                    ✓ {service}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-slate-500 uppercase block mb-2">Supported Currencies</span>
+                              <div className="flex gap-2">
+                                {atm.supportedCurrencies.map(currency => (
+                                  <span key={currency} className="text-[10px] bg-blue-500/20 text-blue-300 px-2 py-1 rounded-lg font-mono font-bold">
+                                    {currency}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Action Buttons */}
+                          <div className="flex gap-3">
+                            <button 
+                              onClick={() => {
+                                setShowAtmLocator(false);
+                                setShowSend(true);
+                              }}
+                              className="flex-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold py-2.5 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-2"
+                            >
+                              <Send className="w-3.5 h-3.5" />
+                              Proceed to Withdrawal
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setShowAtmLocator(false);
+                              }}
+                              className="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer"
+                            >
+                              Close
+                            </button>
+                          </div>
+                        </>
+                      ) : null;
+                    })()
+                  ) : (
+                    <div className="bg-slate-950 rounded-xl border border-slate-800 h-80 flex items-center justify-center">
+                      <div className="text-center">
+                        <Map className="w-12 h-12 text-slate-600 mx-auto mb-2" />
+                        <p className="text-[10px] text-slate-500">Select an ATM to view details</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </motion.div>
           </div>
