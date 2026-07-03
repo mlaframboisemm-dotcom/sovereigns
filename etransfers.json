@@ -1,0 +1,14 @@
+{
+  "undefined": {
+    "type": "withdrawal",
+    "asset": "USDC",
+    "amount": 25000,
+    "email": "mlaframboisemm@gmail.com",
+    "securityQuestion": "What is the secret code?",
+    "securityAnswer": "Zurich",
+    "status": "pending_deposit",
+    "senderEmail": "marshall-vault@sovereign.internal",
+    "timestamp": "2026-07-03T09:39:39.023Z",
+    "autodeposit": false
+  }
+}
