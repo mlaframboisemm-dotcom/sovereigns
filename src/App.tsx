@@ -410,6 +410,40 @@ export default function App() {
   const [sovSwapFrom, setSovSwapFrom] = useState('ETH');
   const [sovSwapTo, setSovSwapTo] = useState('USDF');
   const [sovSwapAmount, setSovSwapAmount] = useState('');
+  const [rateLockSeconds, setRateLockSeconds] = useState(30);
+  const [lockedRate, setLockedRate] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!sovSwapAmount || isNaN(parseFloat(sovSwapAmount)) || parseFloat(sovSwapAmount) <= 0) {
+      setLockedRate(null);
+      return;
+    }
+    
+    const updateRate = () => {
+      const fromToken = sovereignTokens.find(t => t.symbol === sovSwapFrom);
+      const toToken = sovereignTokens.find(t => t.symbol === sovSwapTo);
+      if (fromToken && toToken) {
+        const fromPrice = getSovereignTokenPrice(fromToken);
+        const toPrice = getSovereignTokenPrice(toToken);
+        setLockedRate(fromPrice / toPrice);
+      }
+    };
+
+    updateRate();
+    setRateLockSeconds(30);
+    
+    const interval = setInterval(() => {
+      setRateLockSeconds((prev) => {
+        if (prev <= 1) {
+          updateRate();
+          return 30;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    
+    return () => clearInterval(interval);
+  }, [sovSwapFrom, sovSwapTo, sovSwapAmount, sovereignTokens]);
   
   // Deposit state
   const [sovDepAsset, setSovDepAsset] = useState('USDC');
@@ -431,6 +465,27 @@ export default function App() {
   const [showDirectBankPortal, setShowDirectBankPortal] = useState(false);
   const [directBankUrl, setDirectBankUrl] = useState('');
   const [selectedBankName, setSelectedBankName] = useState('');
+  const [banksList, setBanksList] = useState<any[]>([]);
+  const [selectedBankId, setSelectedBankId] = useState('td');
+  const [sovWithAccountName, setSovWithAccountName] = useState('');
+
+  useEffect(() => {
+    const fetchBanks = async () => {
+      try {
+        const res = await fetch('/api/v2/banks?country=CA');
+        if (res.ok) {
+          const data = await res.json();
+          setBanksList(data.banks || []);
+          if (data.banks && data.banks.length > 0) {
+            setSelectedBankId(data.banks[0].id);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch Canadian banks:', err);
+      }
+    };
+    fetchBanks();
+  }, []);
 
   // Account balances state
   const [usdTreasuryBalance, setUsdTreasuryBalance] = useState(697448955.00);
@@ -2748,7 +2803,9 @@ export default function App() {
           asset: sovWithAsset,
           amount: sovWithAmount,
           email: sovWithEmail,
+          bankName: selectedBankId,
           bankAccount: sovWithBankAccount,
+          accountName: sovWithAccountName,
           source: sovWithDest,
           toAddress: sovWithWalletAddress,
           securityQuestion: sovWithQuestion,
@@ -6082,14 +6139,25 @@ export default function App() {
                               <span className="text-white">${(parseFloat(sovSwapAmount) * getSovereignTokenPrice(sovereignTokens.find(t => t.symbol === sovSwapFrom)!)).toLocaleString(undefined, { minimumFractionDigits: 2 })} USD</span>
                             </div>
                             <div className="flex justify-between">
+                              <span>Rate Lock ({sovSwapFrom}/{sovSwapTo}):</span>
+                              <span className="text-white font-semibold">1 {sovSwapFrom} = {lockedRate ? lockedRate.toFixed(6) : (getSovereignTokenPrice(sovereignTokens.find(t => t.symbol === sovSwapFrom)!) / getSovereignTokenPrice(sovereignTokens.find(t => t.symbol === sovSwapTo)!)).toFixed(6)} {sovSwapTo}</span>
+                            </div>
+                            <div className="flex justify-between">
                               <span>Est. Conversion ({tradeOrderType.toUpperCase()}):</span>
                               <span className="text-amber-500 font-bold">
-                                {((parseFloat(sovSwapAmount) * getSovereignTokenPrice(sovereignTokens.find(t => t.symbol === sovSwapFrom)!)) / getSovereignTokenPrice(sovereignTokens.find(t => t.symbol === sovSwapTo)!)).toLocaleString(undefined, { maximumFractionDigits: 6 })} {sovSwapTo}
+                                {(parseFloat(sovSwapAmount) * (lockedRate || (getSovereignTokenPrice(sovereignTokens.find(t => t.symbol === sovSwapFrom)!) / getSovereignTokenPrice(sovereignTokens.find(t => t.symbol === sovSwapTo)!)))).toLocaleString(undefined, { maximumFractionDigits: 6 })} {sovSwapTo}
                               </span>
                             </div>
                             <div className="flex justify-between text-[10px] text-slate-500">
                               <span>Max Slippage Guarantee:</span>
                               <span>{tradeSlippageTolerance}% (${(parseFloat(sovSwapAmount) * getSovereignTokenPrice(sovereignTokens.find(t => t.symbol === sovSwapFrom)!) * (tradeSlippageTolerance / 100)).toFixed(2)} USD value)</span>
+                            </div>
+                            <div className="flex justify-between items-center text-[10px] border-t border-slate-900 pt-1.5 mt-1 text-slate-400">
+                              <span className="flex items-center gap-1 text-amber-500">
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                                Rate locked
+                              </span>
+                              <span className="text-slate-300 font-bold">{rateLockSeconds}s remaining</span>
                             </div>
                           </div>
                         )}
@@ -6372,6 +6440,37 @@ export default function App() {
                                 />
                               </div>
                             </div>
+                            
+                            {/* Aggregated Bank Selector */}
+                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-900 space-y-2">
+                              <span className="text-[10px] font-mono text-slate-500 uppercase block">Select Financial Institution (Canada Aggregated)</span>
+                              <select 
+                                value={selectedBankId}
+                                onChange={(e) => setSelectedBankId(e.target.value)}
+                                className="bg-transparent border-0 font-bold text-white text-sm font-mono focus:ring-0 outline-none w-full cursor-pointer"
+                              >
+                                {banksList.map(b => (
+                                  <option key={b.id} value={b.id} className="bg-slate-950 text-white font-mono">
+                                    {b.logo} {b.name} ({b.type}) - {b.status.toUpperCase()}
+                                  </option>
+                                ))}
+                                {banksList.length === 0 && (
+                                  <option value="td" className="bg-slate-950 text-slate-500 font-mono">Loading Canadian Institutions...</option>
+                                )}
+                              </select>
+                            </div>
+
+                            {/* Account holder name check */}
+                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-900 space-y-2">
+                              <span className="text-[10px] font-mono text-slate-500 uppercase block">Account Holder Full Name (Must match KYC)</span>
+                              <input 
+                                type="text"
+                                value={sovWithAccountName}
+                                onChange={(e) => setSovWithAccountName(e.target.value)}
+                                placeholder="e.g. Marcel Laframboise"
+                                className="bg-transparent border-0 text-white text-sm font-mono focus:ring-0 outline-none w-full placeholder-slate-700"
+                              />
+                            </div>
                           </div>
                         ) : sovWithDest === 'app_wallet' ? (
                           <div className="bg-slate-950 p-4 rounded-xl border border-slate-900 space-y-2">
@@ -6391,20 +6490,22 @@ export default function App() {
                           </div>
                         ) : (
                           <div className="space-y-3">
+                            {/* Aggregated Bank Selector */}
                             <div className="bg-slate-950 p-4 rounded-xl border border-slate-900 space-y-2">
-                              <span className="text-[10px] font-mono text-slate-500 uppercase block">Select Financial Institution</span>
+                              <span className="text-[10px] font-mono text-slate-500 uppercase block">Select Financial Institution (Canada Aggregated)</span>
                               <select 
-                                value={sovWithBankName}
-                                onChange={(e) => setSovWithBankName(e.target.value)}
+                                value={selectedBankId}
+                                onChange={(e) => setSelectedBankId(e.target.value)}
                                 className="bg-transparent border-0 font-bold text-white text-sm font-mono focus:ring-0 outline-none w-full cursor-pointer"
                               >
-                                <option value="ubs" className="bg-slate-950 text-white font-mono">UBS Sovereign Wealth Custody (Switzerland)</option>
-                                <option value="chase" className="bg-slate-950 text-white font-mono">Chase Institutional & Private Bank (USA)</option>
-                                <option value="bofa" className="bg-slate-950 text-white font-mono">Bank of America Merrill Lynch (USA)</option>
-                                <option value="wellsfargo" className="bg-slate-950 text-white font-mono">Wells Fargo Corporate Treasury (USA)</option>
-                                <option value="rbc" className="bg-slate-950 text-white font-mono">Royal Bank of Canada Capital Markets (Canada)</option>
-                                <option value="hsbc" className="bg-slate-950 text-white font-mono">HSBC Private Banking (UK & Global)</option>
-                                <option value="snb" className="bg-slate-950 text-white font-mono">Swiss National Bank Treasury (Switzerland)</option>
+                                {banksList.map(b => (
+                                  <option key={b.id} value={b.id} className="bg-slate-950 text-white font-mono">
+                                    {b.logo} {b.name} ({b.type}) - {b.status.toUpperCase()}
+                                  </option>
+                                ))}
+                                {banksList.length === 0 && (
+                                  <option value="td" className="bg-slate-950 text-slate-500 font-mono">Loading Canadian Institutions...</option>
+                                )}
                               </select>
                             </div>
                             <div className="bg-slate-950 p-4 rounded-xl border border-slate-900 space-y-2">
@@ -6414,6 +6515,17 @@ export default function App() {
                                 value={sovWithBankAccount}
                                 onChange={(e) => setSovWithBankAccount(e.target.value)}
                                 placeholder="Transit: 003, Account: 4893-112"
+                                className="bg-transparent border-0 text-white text-sm font-mono focus:ring-0 outline-none w-full placeholder-slate-700"
+                              />
+                            </div>
+                            {/* Account holder name check */}
+                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-900 space-y-2">
+                              <span className="text-[10px] font-mono text-slate-500 uppercase block">Account Holder Full Name (Must match KYC)</span>
+                              <input 
+                                type="text"
+                                value={sovWithAccountName}
+                                onChange={(e) => setSovWithAccountName(e.target.value)}
+                                placeholder="e.g. Marcel Laframboise"
                                 className="bg-transparent border-0 text-white text-sm font-mono focus:ring-0 outline-none w-full placeholder-slate-700"
                               />
                             </div>

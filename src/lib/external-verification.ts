@@ -1,3 +1,5 @@
+import crypto from 'crypto';
+
 /**
  * External Verification System
  * 
@@ -137,6 +139,70 @@ export async function verifyBlockchainTx(
 }
 
 /**
+ * Cryptographic helper to generate Coinbase Advanced Trade API v3 JWTs.
+ */
+function generateCoinbaseJWT(keyId: string, secretRaw: string, path: string): string {
+  const kid = keyId;
+  const alg = 'ES256';
+  
+  const header = {
+    alg,
+    kid,
+    nonce: crypto.randomBytes(16).toString('hex'),
+    typ: 'JWT'
+  };
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const payload = {
+    iss: 'coinbase-cloud',
+    nbf: nowSeconds - 10,
+    exp: nowSeconds + 110,
+    sub: kid,
+    aud: ['direct']
+  };
+
+  const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const unsignedToken = `${headerB64}.${payloadB64}`;
+
+  let pemKey = secretRaw;
+  if (!pemKey.includes('-----BEGIN PRIVATE KEY-----')) {
+    pemKey = pemKey.replace(/\\n/g, '\n');
+  }
+
+  try {
+    const sign = crypto.createSign('SHA256');
+    sign.update(unsignedToken);
+    sign.end();
+    const signatureB64 = sign.sign(pemKey, 'base64url');
+    return `${unsignedToken}.${signatureB64}`;
+  } catch (err) {
+    const signatureHS256 = crypto.createHmac('sha256', secretRaw)
+      .update(unsignedToken)
+      .digest('base64url');
+    return `${unsignedToken}.${signatureHS256}`;
+  }
+}
+
+/**
+ * Cryptographic helper to generate Kraken private API Signatures (API-Sign).
+ */
+function generateKrakenSignature(urlPath: string, nonce: string, postData: string, apiSecret: string): string {
+  try {
+    const secretBuffer = Buffer.from(apiSecret, 'base64');
+    const sha256Hash = crypto.createHash('sha256').update(nonce + postData).digest();
+    const hmac = crypto.createHmac('sha512', secretBuffer);
+    
+    hmac.update(urlPath);
+    hmac.update(sha256Hash);
+    
+    return hmac.digest('base64');
+  } catch (err) {
+    return 'hmac_signature_calculation_error';
+  }
+}
+
+/**
  * Verify exchange order execution via real API
  */
 export async function verifyExchangeOrder(
@@ -148,14 +214,16 @@ export async function verifyExchangeOrder(
   try {
     // Coinbase API verification
     if (exchange.toLowerCase() === 'coinbase') {
-      const response = await fetch(`https://api.coinbase.com/api/v3/brokerage/orders/historical/${orderId}`, {
+      const path = `/api/v3/brokerage/orders/historical/${orderId}`;
+      const jwt = generateCoinbaseJWT(apiKey, apiSecret, path);
+      const response = await fetch(`https://api.coinbase.com${path}`, {
         headers: {
-          'Authorization': `Bearer ${apiKey}`,
+          'Authorization': `Bearer ${jwt}`,
         },
       });
 
-      const data = await response.json();
-      const isVerified = response.ok && data.order_id === orderId;
+      const data = await response.json() as any;
+      const isVerified = response.ok && (data.order?.order_id === orderId || data.order_id === orderId || data.order?.id === orderId);
 
       return {
         type: 'exchange',
@@ -169,15 +237,43 @@ export async function verifyExchangeOrder(
 
     // Kraken API verification
     if (exchange.toLowerCase() === 'kraken') {
-      // Note: Simplified - actual Kraken verification would require HMAC signature
-      return {
-        type: 'exchange',
-        status: 'pending',
-        referenceId: orderId,
-        rawResponse: { message: 'Kraken verification requires authenticated API call' },
-        timestamp: new Date().toISOString(),
-        externalSource: 'Kraken Private API',
-      };
+      const nonce = Date.now().toString();
+      const path = '/0/private/QueryOrders';
+      const postData = `nonce=${nonce}&txid=${orderId}`;
+      const signature = generateKrakenSignature(path, nonce, postData, apiSecret);
+
+      const response = await fetch(`https://api.kraken.com${path}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'API-Key': apiKey,
+          'API-Sign': signature
+        },
+        body: postData
+      });
+
+      if (response.ok) {
+        const data = await response.json() as any;
+        const isVerified = data.result && data.result[orderId] !== undefined;
+        return {
+          type: 'exchange',
+          status: isVerified ? 'verified' : 'failed',
+          referenceId: orderId,
+          rawResponse: data,
+          timestamp: new Date().toISOString(),
+          externalSource: 'Kraken Private API',
+        };
+      } else {
+        const errText = await response.text();
+        return {
+          type: 'exchange',
+          status: 'failed',
+          referenceId: orderId,
+          rawResponse: { error: errText },
+          timestamp: new Date().toISOString(),
+          externalSource: 'Kraken Private API',
+        };
+      }
     }
 
     return {

@@ -107,8 +107,12 @@ export class CriticalOperationEnforcer {
     let externalProof: ProofObject | null = null;
 
     if (this.config.requireExternalProof) {
-      const apiKey = process.env[`${exchange.toUpperCase()}_API_KEY`];
-      const apiSecret = process.env[`${exchange.toUpperCase()}_API_SECRET`];
+      const apiKey = exchange.toLowerCase() === 'coinbase' 
+        ? process.env.COINBASE_API_KEY_ID 
+        : process.env.KRAKEN_API_KEY;
+      const apiSecret = exchange.toLowerCase() === 'coinbase' 
+        ? process.env.COINBASE_API_SECRET_RAW 
+        : process.env.KRAKEN_API_SECRET;
 
       if (!apiKey || !apiSecret) {
         return createTestResult(

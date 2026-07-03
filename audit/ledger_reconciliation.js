@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { LedgerMutex } from '../src/lib/ledger-mutex.js';
 
 /**
  * Marshall Effect - Forensic Ledger Reconciliation Engine
@@ -13,7 +14,7 @@ export async function runForensicScan(ledgerPath = './ledger_db.json') {
   }
 
   const raw = fs.readFileSync(ledgerPath, 'utf-8');
-  const ledger = JSON.parse(raw);
+  const ledger = LedgerMutex.decryptLedgerData(raw);
   const entries = ledger.entries || [];
 
   const discrepancies = [];
