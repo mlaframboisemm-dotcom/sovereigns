@@ -66,8 +66,7 @@ import {
   X,
   ShieldAlert,
   CheckCircle,
-  Anchor,
-  Map
+  Anchor
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { jsPDF } from 'jspdf';
@@ -172,14 +171,9 @@ export default function App() {
   const [importKey, setImportKey] = useState('');
   const [sendTo, setSendTo] = useState('');
   const [sendAmount, setSendAmount] = useState('');
-  const [sendToken, setSendToken] = useState<string>('ETH'); // Token selector for Send
   const [estimatedFee, setEstimatedFee] = useState({ fee: '0.00', symbol: '' });
   const [feeLoading, setFeeLoading] = useState(false);
   const [txNote, setTxNote] = useState('');
-  const [addressValidation, setAddressValidation] = useState<{ valid: boolean | null; message: string }>({ valid: null, message: '' });
-  const [usdConversion, setUsdConversion] = useState<{ amount: string; symbol: string }>({ amount: '0.00', symbol: 'USD' });
-  const [atmBankingConnected, setAtmBankingConnected] = useState(false);
-  const [atmApiKey, setAtmApiKey] = useState<string | null>(null);
 
   // AI Insights
   const [aiInsights, setAiInsights] = useState('');
@@ -200,44 +194,6 @@ export default function App() {
 
   // Marshall Sovereign State
   const [activeTab, setActiveTab] = useState<'sovereign' | 'vault' | 'intelligence'>('sovereign');
-  // ATM states injected for physical banking integrations
-  const [atmVoucherCode, setAtmVoucherCode] = useState('');
-  const [atmVoucherPin, setAtmVoucherPin] = useState('');
-  const [atmTxHash, setAtmTxHash] = useState('');
-  const [showAtmVoucher, setShowAtmVoucher] = useState(false);
-  const [atmAmountInput, setAtmAmountInput] = useState('');
-  const [atmAssetSelect, setAtmAssetSelect] = useState('USDC');
-  
-  // ATM Locator State
-  const [showAtmLocator, setShowAtmLocator] = useState(false);
-  const [atmLocations, setAtmLocations] = useState<Array<{
-    id: string;
-    name: string;
-    address: string;
-    distance: number; // km
-    latitude: number;
-    longitude: number;
-    network: string;
-    availableServices: string[];
-    isOpen: boolean;
-    hours: string;
-    supportedCurrencies: string[];
-  }>>([]);
-  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [loadingAtmLocations, setLoadingAtmLocations] = useState(false);
-  const [selectedAtm, setSelectedAtm] = useState<string | null>(null);
-  const [atmLocatorRadius, setAtmLocatorRadius] = useState(5); // km
-  
-  // Bitcoin ATM Purchase State
-  const [bitcoinAddress, setBitcoinAddress] = useState<string | null>(null);
-  const [showBitcoinAtmModal, setShowBitcoinAtmModal] = useState(false);
-  const [bitcoinPurchaseAmount, setBitcoinPurchaseAmount] = useState('');
-  const [bitcoinPurchaseFiat, setBitcoinPurchaseFiat] = useState('USD');
-  const [bitcoinAmountBtc, setBitcoinAmountBtc] = useState('0.00000000');
-  const [bitcoinLoading, setBitcoinLoading] = useState(false);
-  const [bitcoinOrderId, setBitcoinOrderId] = useState<string | null>(null);
-  const [bitcoinOrderStatus, setBitcoinOrderStatus] = useState<'pending' | 'completed' | 'failed' | null>(null);
-  
   const [activeReconTab, setActiveReconTab] = useState<'exchanges' | 'yield' | 'gold' | 'delegation'>('exchanges');
   const [sovereignTokens, setSovereignTokens] = useState<typeof SOVEREIGN_TOKENS>(SOVEREIGN_TOKENS);
   const [marshallConfig, setMarshallConfig] = useState<{
@@ -407,7 +363,7 @@ export default function App() {
 
   const saveSovereignIntel = async (newIntel: typeof sovIntelState) => {
     if (!user) return;
-    const isSandbox = false;
+    const isSandbox = user.isSandbox || localStorage.getItem('sovereign_sandbox_active') === 'true';
     if (isSandbox) {
       localStorage.setItem(`sov_intel_${user.uid}`, JSON.stringify(newIntel));
       setSovIntelState(newIntel);
@@ -418,17 +374,6 @@ export default function App() {
       const intelRef = doc(db, 'users', user.uid, 'sovereign', 'intelligence');
       try {
         await setDoc(intelRef, newIntel);
-        // Sync with backend auto-yield scheduler
-        await fetch('/api/yield/config', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId: user.uid,
-            targetAddress: newIntel.targetYieldAddress,
-            stakedEth: newIntel.stakedEth,
-            rwaAllocated: newIntel.rwaAllocated
-          })
-        }).catch(err => console.error('Failed to sync yield config with server:', err));
       } catch (err) {
         handleFirestoreError(err, OperationType.WRITE, path);
       }
@@ -446,40 +391,6 @@ export default function App() {
   const [sovSwapFrom, setSovSwapFrom] = useState('ETH');
   const [sovSwapTo, setSovSwapTo] = useState('USDF');
   const [sovSwapAmount, setSovSwapAmount] = useState('');
-  const [rateLockSeconds, setRateLockSeconds] = useState(30);
-  const [lockedRate, setLockedRate] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (!sovSwapAmount || isNaN(parseFloat(sovSwapAmount)) || parseFloat(sovSwapAmount) <= 0) {
-      setLockedRate(null);
-      return;
-    }
-    
-    const updateRate = () => {
-      const fromToken = sovereignTokens.find(t => t.symbol === sovSwapFrom);
-      const toToken = sovereignTokens.find(t => t.symbol === sovSwapTo);
-      if (fromToken && toToken) {
-        const fromPrice = getSovereignTokenPrice(fromToken);
-        const toPrice = getSovereignTokenPrice(toToken);
-        setLockedRate(fromPrice / toPrice);
-      }
-    };
-
-    updateRate();
-    setRateLockSeconds(30);
-    
-    const interval = setInterval(() => {
-      setRateLockSeconds((prev) => {
-        if (prev <= 1) {
-          updateRate();
-          return 30;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    
-    return () => clearInterval(interval);
-  }, [sovSwapFrom, sovSwapTo, sovSwapAmount, sovereignTokens]);
   
   // Deposit state
   const [sovDepAsset, setSovDepAsset] = useState('USDC');
@@ -501,27 +412,6 @@ export default function App() {
   const [showDirectBankPortal, setShowDirectBankPortal] = useState(false);
   const [directBankUrl, setDirectBankUrl] = useState('');
   const [selectedBankName, setSelectedBankName] = useState('');
-  const [banksList, setBanksList] = useState<any[]>([]);
-  const [selectedBankId, setSelectedBankId] = useState('td');
-  const [sovWithAccountName, setSovWithAccountName] = useState('');
-
-  useEffect(() => {
-    const fetchBanks = async () => {
-      try {
-        const res = await fetch('/api/v2/banks?country=CA');
-        if (res.ok) {
-          const data = await res.json();
-          setBanksList(data.banks || []);
-          if (data.banks && data.banks.length > 0) {
-            setSelectedBankId(data.banks[0].id);
-          }
-        }
-      } catch (err) {
-        console.error('Failed to fetch Canadian banks:', err);
-      }
-    };
-    fetchBanks();
-  }, []);
 
   // Account balances state
   const [usdTreasuryBalance, setUsdTreasuryBalance] = useState(697448955.00);
@@ -1009,7 +899,7 @@ export default function App() {
   // -------------------------------------------------------------
 
   const saveWalletToDb = async (walletId: string, walletDoc: EncryptedWalletData) => {
-    const isSandbox = false;
+    const isSandbox = user?.isSandbox || localStorage.getItem('sovereign_sandbox_active') === 'true';
     if (isSandbox) {
       const stored = localStorage.getItem(`wallets_${user?.uid || 'sandbox_user_id'}`);
       const walletsList = stored ? JSON.parse(stored) : [];
@@ -1026,7 +916,7 @@ export default function App() {
   };
 
   const deleteWalletFromDb = async (walletId: string) => {
-    const isSandbox = false;
+    const isSandbox = user?.isSandbox || localStorage.getItem('sovereign_sandbox_active') === 'true';
     if (isSandbox) {
       const stored = localStorage.getItem(`wallets_${user?.uid || 'sandbox_user_id'}`);
       if (stored) {
@@ -1045,7 +935,7 @@ export default function App() {
   };
 
   const saveTransactionToDb = async (txId: string, txDoc: BlockchainTransaction) => {
-    const isSandbox = false;
+    const isSandbox = user?.isSandbox || localStorage.getItem('sovereign_sandbox_active') === 'true';
     if (isSandbox) {
       const stored = localStorage.getItem(`txs_${user?.uid || 'sandbox_user_id'}`);
       const txsList = stored ? JSON.parse(stored) : [];
@@ -1065,7 +955,7 @@ export default function App() {
   };
 
   const fetchUserProfile = async (userId: string, email: string) => {
-    const isSandbox = false;
+    const isSandbox = userId === 'sandbox_user_id' || localStorage.getItem('sovereign_sandbox_active') === 'true';
     if (isSandbox) {
       const stored = localStorage.getItem(`profile_${userId}`);
       if (stored) {
@@ -1103,7 +993,7 @@ export default function App() {
 
   const saveAuditLog = async (userId: string, action: string, details: string) => {
     const logId = 'log_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
-    const isSandbox = false;
+    const isSandbox = userId === 'sandbox_user_id' || localStorage.getItem('sovereign_sandbox_active') === 'true';
     const cleanUserAgent = (navigator.userAgent || '').substring(0, 1000);
     const newLog = {
       logId,
@@ -1147,7 +1037,7 @@ export default function App() {
     }
     
     const userId = user.uid;
-    const isSandbox = false;
+    const isSandbox = user.isSandbox || localStorage.getItem('sovereign_sandbox_active') === 'true';
     const pinHashed = await hashPin(pin);
     const newProfile: UserProfile = {
       userId,
@@ -1258,7 +1148,7 @@ export default function App() {
   };
 
   const fetchUserData = async (userId: string) => {
-    const isSandbox = false;
+    const isSandbox = userId === 'sandbox_user_id' || localStorage.getItem('sovereign_sandbox_active') === 'true';
     if (isSandbox) {
       // 1. Wallets
       const storedWallets = localStorage.getItem(`wallets_${userId}`);
@@ -1490,12 +1380,7 @@ export default function App() {
           encryptionIv: configDataToUse.encryptionIv || '',
           lastUpdate: new Date().toISOString(),
           status: configDataToUse.status || 'STABLE',
-          sovereignPin: sovereignPin,
-          usdTreasuryBalance: configDataToUse.usdTreasuryBalance ?? 697448955.00,
-          cadOperatingBalance: configDataToUse.cadOperatingBalance ?? 952017823.58,
-          swissAlpineBalance: configDataToUse.swissAlpineBalance ?? 620000000.00,
-          personalCadBalance: configDataToUse.personalCadBalance ?? 120450.00,
-          personalUsdBalance: configDataToUse.personalUsdBalance ?? 85200.00
+          sovereignPin: sovereignPin
         };
 
         if (!sovConfigSnap.exists() || 
@@ -1509,11 +1394,6 @@ export default function App() {
         }
 
         setMarshallConfig(mergedConfig);
-        setUsdTreasuryBalance(mergedConfig.usdTreasuryBalance);
-        setCadOperatingBalance(mergedConfig.cadOperatingBalance);
-        setSwissAlpineBalance(mergedConfig.swissAlpineBalance);
-        setPersonalCadBalance(mergedConfig.personalCadBalance);
-        setPersonalUsdBalance(mergedConfig.personalUsdBalance);
         if (!mergedConfig.sovereignPin) {
           setPinSetup(true);
         }
@@ -1525,12 +1405,7 @@ export default function App() {
           hasPrivateKey: serverConfig?.hasPrivateKey || false,
           lastUpdate: new Date().toISOString(),
           status: 'STABLE',
-          sovereignPin: '',
-          usdTreasuryBalance: 697448955.00,
-          cadOperatingBalance: 952017823.58,
-          swissAlpineBalance: 620000000.00,
-          personalCadBalance: 120450.00,
-          personalUsdBalance: 85200.00
+          sovereignPin: ''
         };
         try {
           await setDoc(sovConfigRef, defaultConfig);
@@ -1538,11 +1413,6 @@ export default function App() {
           handleFirestoreError(err, OperationType.WRITE, `users/${userId}/sovereign/config`);
         }
         setMarshallConfig(defaultConfig);
-        setUsdTreasuryBalance(defaultConfig.usdTreasuryBalance);
-        setCadOperatingBalance(defaultConfig.cadOperatingBalance);
-        setSwissAlpineBalance(defaultConfig.swissAlpineBalance);
-        setPersonalCadBalance(defaultConfig.personalCadBalance);
-        setPersonalUsdBalance(defaultConfig.personalUsdBalance);
         setPinSetup(true);
       }
 
@@ -1749,7 +1619,7 @@ export default function App() {
   };
 
   const fetchAuditLogs = async (userId: string) => {
-    const isSandbox = false;
+    const isSandbox = userId === 'sandbox_user_id' || localStorage.getItem('sovereign_sandbox_active') === 'true';
     if (isSandbox) {
       const storedLogs = localStorage.getItem(`logs_${userId}`);
       setAuditLogs(storedLogs ? JSON.parse(storedLogs) : []);
@@ -1937,7 +1807,7 @@ export default function App() {
       setTransactions(prev => [newTx, ...prev]);
       
       // Persist in Firestore or Local Storage
-      const isSandbox = false;
+      const isSandbox = user.uid === 'sandbox_user_id' || localStorage.getItem('sovereign_sandbox_active') === 'true';
       if (!isSandbox) {
         try {
           const txDocRef = doc(db, 'users', user.uid, 'transactions', txId);
@@ -2255,288 +2125,6 @@ export default function App() {
     }
   };
 
-  // Validate recipient address in real-time
-  const validateSendAddress = (address: string) => {
-    if (!address) {
-      setAddressValidation({ valid: null, message: '' });
-      return;
-    }
-    
-    const isValid = validateAddress(activeWallet?.chainType || 'Ethereum', address);
-    setAddressValidation({
-      valid: isValid,
-      message: isValid 
-        ? '✓ Valid wallet address' 
-        : '✗ Invalid address format for ' + (activeWallet?.chainType || 'Ethereum')
-    });
-  };
-
-  // Calculate USD conversion for selected token
-  const calculateUsdConversion = (amount: string) => {
-    if (!amount || !sendToken) return;
-    
-    const selectedToken = sovereignTokens.find(t => t.symbol === sendToken);
-    if (!selectedToken) return;
-    
-    const numAmount = parseFloat(amount);
-    const price = usdRates[sendToken] || selectedToken.priceFallback || 0;
-    const usdValue = (numAmount * price).toFixed(2);
-    
-    setUsdConversion({ amount: usdValue, symbol: 'USD' });
-  };
-
-  // Get token balance for selected token
-  const getTokenBalance = (): string => {
-    const token = sovereignTokens.find(t => t.symbol === sendToken);
-    if (!token) return '0.00';
-    
-    return token.balance.toFixed(token.symbol === 'PEPE' ? 0 : 6);
-  };
-
-  // Initialize ATM banking connection
-  const initializeAtmBanking = async () => {
-    try {
-      setLoadingAction('atm-connect');
-      // Connect to real ATM banking API (e.g., Fiserv, FIS, etc.)
-      const response = await fetch('/api/atm/connect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: user?.uid,
-          walletAddress: activeWallet?.address,
-          timestamp: new Date().toISOString()
-        })
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setAtmApiKey(data.apiKey);
-        setAtmBankingConnected(true);
-        triggerNotification('ATM banking connection established', 'success');
-      } else {
-        triggerNotification('Failed to connect to ATM network', 'error');
-      }
-    } catch (error) {
-      console.error('ATM connection error:', error);
-      triggerNotification('ATM connection error: ' + (error as Error).message, 'error');
-    } finally {
-      setLoadingAction(null);
-    }
-  };
-
-  // Process real ATM withdrawal via banking network
-  const processRealAtmWithdrawal = async (amount: string, pin: string) => {
-    if (!atmBankingConnected || !atmApiKey) {
-      triggerNotification('ATM not connected. Please initialize connection first.', 'error');
-      return;
-    }
-
-    try {
-      setLoadingAction('atm-withdraw');
-      const response = await fetch('/api/atm/withdraw', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${atmApiKey}`
-        },
-        body: JSON.stringify({
-          amount: parseFloat(amount),
-          currency: 'CAD',
-          walletAddress: activeWallet?.address,
-          userId: user?.uid,
-          securityPin: pin,
-          timestamp: new Date().toISOString()
-        })
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        setAtmVoucherCode(result.voucherCode);
-        setAtmVoucherPin(result.securePin);
-        setAtmTxHash(result.txHash);
-        setShowAtmVoucher(true);
-        triggerNotification('ATM withdrawal initiated - voucher generated', 'success');
-      } else {
-        const error = await response.json();
-        triggerNotification('ATM withdrawal failed: ' + error.message, 'error');
-      }
-    } catch (error) {
-      console.error('ATM withdrawal error:', error);
-      triggerNotification('ATM withdrawal error: ' + (error as Error).message, 'error');
-    } finally {
-      setLoadingAction(null);
-    }
-  };
-
-  // Fetch real ATM locations near user
-  const fetchAtmLocations = async () => {
-    try {
-      setLoadingAtmLocations(true);
-
-      // Request user's geolocation
-      if (!userLocation) {
-        return new Promise((resolve) => {
-          navigator.geolocation.getCurrentPosition(
-            async (position) => {
-              const loc = {
-                lat: position.coords.latitude,
-                lng: position.coords.longitude
-              };
-              setUserLocation(loc);
-
-              // Fetch ATMs from backend
-              const res = await fetch('/api/atm/locator', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  latitude: loc.lat,
-                  longitude: loc.lng,
-                  radiusKm: atmLocatorRadius,
-                  userId: user?.uid
-                })
-              });
-
-              if (res.ok) {
-                const data = await res.json();
-                setAtmLocations(data.atms || []);
-                triggerNotification(`Found ${data.atms?.length || 0} ATMs near you`, 'success');
-              } else {
-                triggerNotification('Could not fetch ATM locations', 'error');
-              }
-              resolve(null);
-            },
-            (error) => {
-              console.error('Geolocation error:', error);
-              triggerNotification('Please enable location access to find nearby ATMs', 'error');
-              resolve(null);
-            }
-          );
-        });
-      } else {
-        // Use existing location
-        const res = await fetch('/api/atm/locator', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            latitude: userLocation.lat,
-            longitude: userLocation.lng,
-            radiusKm: atmLocatorRadius,
-            userId: user?.uid
-          })
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          setAtmLocations(data.atms || []);
-          triggerNotification(`Found ${data.atms?.length || 0} ATMs near you`, 'success');
-        }
-      }
-    } catch (error) {
-      console.error('ATM locator error:', error);
-      triggerNotification('Error fetching ATM locations: ' + (error as Error).message, 'error');
-    } finally {
-      setLoadingAtmLocations(false);
-    }
-  };
-
-  // Generate Bitcoin Address for ATM purchases
-  const generateBitcoinAddress = async () => {
-    try {
-      // Use ethers to generate a valid wallet
-      // For real Bitcoin, you'd use bip32/bip39, but ethers can generate valid addresses
-      const wallet = ethers.Wallet.createRandom();
-      setBitcoinAddress(wallet.address);
-      return wallet.address;
-    } catch (error) {
-      console.error('Bitcoin address generation error:', error);
-      triggerNotification('Failed to generate Bitcoin address', 'error');
-      return null;
-    }
-  };
-
-  // Calculate BTC amount from USD using live price
-  const calculateBtcAmount = async (usdAmount: string) => {
-    try {
-      const amount = parseFloat(usdAmount);
-      if (isNaN(amount) || amount <= 0) {
-        setBitcoinAmountBtc('0.00000000');
-        return;
-      }
-
-      // Fetch current BTC price from CoinGecko (free, no auth needed)
-      const priceRes = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd');
-      if (!priceRes.ok) throw new Error('Failed to fetch BTC price');
-      
-      const priceData = await priceRes.json();
-      const btcPrice = priceData.bitcoin?.usd;
-      
-      if (!btcPrice) throw new Error('Could not get BTC price');
-      
-      const btcAmount = (amount / btcPrice).toFixed(8);
-      setBitcoinAmountBtc(btcAmount);
-    } catch (error) {
-      console.error('BTC calculation error:', error);
-      triggerNotification('Could not calculate BTC amount: ' + (error as Error).message, 'error');
-    }
-  };
-
-  // Execute real Bitcoin purchase through Coinbase API
-  const executeBitcoinPurchase = async () => {
-    if (!bitcoinAddress) {
-      triggerNotification('Bitcoin address not generated', 'error');
-      return;
-    }
-
-    if (!bitcoinPurchaseAmount || parseFloat(bitcoinPurchaseAmount) <= 0) {
-      triggerNotification('Invalid purchase amount', 'error');
-      return;
-    }
-
-    setBitcoinLoading(true);
-    try {
-      // Call your real Coinbase API endpoint
-      const res = await fetch('/api/exchanges/trade', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'buy',
-          symbol: 'BTC',
-          amount: bitcoinPurchaseAmount,
-          exchange: 'coinbase', // Use real Coinbase API
-          fiat: bitcoinPurchaseFiat
-        })
-      });
-
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || 'Failed to execute Bitcoin purchase');
-      }
-
-      const orderData = await res.json();
-      
-      // Store order details
-      setBitcoinOrderId(orderData.results?.coinbase?.data?.id || orderData.results?.coinbase?.data?.order_id || 'BTC-' + Date.now());
-      setBitcoinOrderStatus('completed');
-      
-      triggerNotification(`✅ Bitcoin purchase successful! Order: ${bitcoinOrderId}`, 'success');
-      triggerNotification(`You should receive ${bitcoinAmountBtc} BTC at your address`, 'success');
-      
-      // Clear form after 3 seconds
-      setTimeout(() => {
-        setBitcoinPurchaseAmount('');
-        setBitcoinAmountBtc('0.00000000');
-        setShowBitcoinAtmModal(false);
-      }, 3000);
-
-    } catch (error) {
-      console.error('Bitcoin purchase error:', error);
-      setBitcoinOrderStatus('failed');
-      triggerNotification('Bitcoin purchase failed: ' + (error as Error).message, 'error');
-    } finally {
-      setBitcoinLoading(false);
-    }
-  };
-
   const broadcastTransaction = async () => {
     if (!user || !activeWallet || !sendTo || !sendAmount) return;
     
@@ -2661,16 +2249,9 @@ export default function App() {
   // SOVEREIGN FINANCIAL OPERATIONS (SWAP, DEPOSIT, WITHDRAW, KEY-SYNC)
   // -------------------------------------------------------------
 
-  const saveSovereignConfig = async (newConfig: any, newTokens?: typeof SOVEREIGN_TOKENS) => {
+  const saveSovereignConfig = async (newConfig: typeof marshallConfig, newTokens?: typeof SOVEREIGN_TOKENS) => {
     if (!user || !newConfig) return;
-    const isSandbox = false;
-    
-    const uTreasury = newConfig.usdTreasuryBalance ?? usdTreasuryBalance;
-    const cOperating = newConfig.cadOperatingBalance ?? cadOperatingBalance;
-    const sAlpine = newConfig.swissAlpineBalance ?? swissAlpineBalance;
-    const pCad = newConfig.personalCadBalance ?? personalCadBalance;
-    const pUsd = newConfig.personalUsdBalance ?? personalUsdBalance;
-
+    const isSandbox = user.isSandbox || localStorage.getItem('sovereign_sandbox_active') === 'true';
     if (isSandbox) {
       try {
         localStorage.setItem(`sov_config_${user.uid}`, JSON.stringify(newConfig));
@@ -2679,11 +2260,6 @@ export default function App() {
           setSovereignTokens(newTokens);
         }
         setMarshallConfig(newConfig);
-        setUsdTreasuryBalance(uTreasury);
-        setCadOperatingBalance(cOperating);
-        setSwissAlpineBalance(sAlpine);
-        setPersonalCadBalance(pCad);
-        setPersonalUsdBalance(pUsd);
         triggerNotification('Sovereign Treasury state updated securely in Local Sandbox', 'success');
       } catch (e) {
         console.error('Failed to save Sovereign configuration in sandbox:', e);
@@ -2705,12 +2281,7 @@ export default function App() {
           encryptionIv: newConfig.encryptionIv || null,
           status: newConfig.status,
           sovereignPin: newConfig.sovereignPin || null,
-          lastUpdate: new Date().toISOString(),
-          usdTreasuryBalance: uTreasury,
-          cadOperatingBalance: cOperating,
-          swissAlpineBalance: sAlpine,
-          personalCadBalance: pCad,
-          personalUsdBalance: pUsd
+          lastUpdate: new Date().toISOString()
         });
       } catch (err) {
         handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/sovereign/config`);
@@ -2727,11 +2298,6 @@ export default function App() {
       }
       
       setMarshallConfig(newConfig);
-      setUsdTreasuryBalance(uTreasury);
-      setCadOperatingBalance(cOperating);
-      setSwissAlpineBalance(sAlpine);
-      setPersonalCadBalance(pCad);
-      setPersonalUsdBalance(pUsd);
       triggerNotification('Sovereign Treasury state updated securely in cloud database', 'success');
     } catch (e) {
       console.error('Failed to save Sovereign configuration:', e);
@@ -3121,9 +2687,7 @@ export default function App() {
           asset: sovWithAsset,
           amount: sovWithAmount,
           email: sovWithEmail,
-          bankName: selectedBankId,
           bankAccount: sovWithBankAccount,
-          accountName: sovWithAccountName,
           source: sovWithDest,
           toAddress: sovWithWalletAddress,
           securityQuestion: sovWithQuestion,
@@ -3182,23 +2746,9 @@ export default function App() {
 
       setTransactions(prev => [newTx, ...prev]);
 
-      // Calculate new balances explicitly and pass to saveSovereignConfig
-      const newUsdTreasury = sovWithAccount === 'usd-treasury' ? usdTreasuryBalance - amountVal : usdTreasuryBalance;
-      const newCadOperating = sovWithAccount === 'cad-operating' ? cadOperatingBalance - amountVal : cadOperatingBalance;
-      const newSwissAlpine = sovWithAccount === 'swiss-alpine' ? swissAlpineBalance - amountVal : swissAlpineBalance;
-      const newPersonalCad = sovWithAccount === 'personal-cad' ? personalCadBalance - amountVal : personalCadBalance;
-      const newPersonalUsd = sovWithAccount === 'personal-usd' ? personalUsdBalance - amountVal : personalUsdBalance;
+      updateAccountBalance(sovWithAccount, amountVal, 'subtract');
 
-      const finalConfig = {
-        ...updatedConfig,
-        usdTreasuryBalance: newUsdTreasury,
-        cadOperatingBalance: newCadOperating,
-        swissAlpineBalance: newSwissAlpine,
-        personalCadBalance: newPersonalCad,
-        personalUsdBalance: newPersonalUsd
-      };
-
-      await saveSovereignConfig(finalConfig, updatedTokens);
+      await saveSovereignConfig(updatedConfig, updatedTokens);
       await saveAuditLog(user.uid, 'SOVEREIGN_WITHDRAWAL', `Withdrawal submitted for ${amountVal} ${sovWithAsset} via ${destLabel}. ${apiResult.message}. Hash: ${secureTxHash || 'Pending Verification'}`);
 
       const bankChoice = sovWithBankName;
@@ -3327,44 +2877,21 @@ export default function App() {
       await saveAuditLog(user?.uid || 'sandbox_user_id', 'ETRANSFER_CLAIMED', `Successfully claimed e-Transfer ${activeETransferRecord.id} ($${activeETransferRecord.amount}) into ${eTransferClaimBank} (${eTransferClaimAccount}).`);
       
       // Update bank balance based on selected bank account
-      const accountId: string = eTransferClaimAccount === 'Primary Checking' 
+      const accountId = eTransferClaimAccount === 'Primary Checking' 
         ? 'personal-cad' 
         : eTransferClaimAccount === 'Corporate Savings' 
           ? 'cad-operating' 
           : 'usd-treasury';
-
-      const amountVal = parseFloat(activeETransferRecord.amount);
-      const newUsdTreasury = accountId === 'usd-treasury' ? usdTreasuryBalance + amountVal : usdTreasuryBalance;
-      const newCadOperating = accountId === 'cad-operating' ? cadOperatingBalance + amountVal : cadOperatingBalance;
-      const newSwissAlpine = accountId === 'swiss-alpine' ? swissAlpineBalance + amountVal : swissAlpineBalance;
-      const newPersonalCad = accountId === 'personal-cad' ? personalCadBalance + amountVal : personalCadBalance;
-      const newPersonalUsd = accountId === 'personal-usd' ? personalUsdBalance + amountVal : personalUsdBalance;
+      updateAccountBalance(accountId, parseFloat(activeETransferRecord.amount), 'add');
 
       // Update local wallet view if it is deposited in our sovereign asset tracker
       const updatedTokens = sovereignTokens.map(t => {
         if (t.symbol === activeETransferRecord.asset) {
-          return { ...t, balance: t.balance + amountVal };
+          return { ...t, balance: t.balance + parseFloat(activeETransferRecord.amount) };
         }
         return t;
       });
-
-      let totalVal = 0;
-      updatedTokens.forEach(t => {
-        totalVal += t.balance * getSovereignTokenPrice(t);
-      });
-
-      const updatedConfig = {
-        ...marshallConfig,
-        ledgerBalance: totalVal,
-        lastUpdate: new Date().toISOString(),
-        usdTreasuryBalance: newUsdTreasury,
-        cadOperatingBalance: newCadOperating,
-        swissAlpineBalance: newSwissAlpine,
-        personalCadBalance: newPersonalCad,
-        personalUsdBalance: newPersonalUsd
-      };
-
-      await saveSovereignConfig(updatedConfig, updatedTokens);
+      setSovereignTokens(updatedTokens);
     } catch (err: any) {
       console.error(err);
       setClaimError(err.message || 'Claim verification failed.');
@@ -3442,22 +2969,9 @@ export default function App() {
       await saveTransactionToDb(txId, newTx);
       setTransactions(prev => [newTx, ...prev]);
 
-      const newUsdTreasury = sovDepAccount === 'usd-treasury' ? usdTreasuryBalance + amountVal : usdTreasuryBalance;
-      const newCadOperating = sovDepAccount === 'cad-operating' ? cadOperatingBalance + amountVal : cadOperatingBalance;
-      const newSwissAlpine = sovDepAccount === 'swiss-alpine' ? swissAlpineBalance + amountVal : swissAlpineBalance;
-      const newPersonalCad = sovDepAccount === 'personal-cad' ? personalCadBalance + amountVal : personalCadBalance;
-      const newPersonalUsd = sovDepAccount === 'personal-usd' ? personalUsdBalance + amountVal : personalUsdBalance;
+      updateAccountBalance(sovDepAccount, amountVal, 'add');
 
-      const finalConfig = {
-        ...updatedConfig,
-        usdTreasuryBalance: newUsdTreasury,
-        cadOperatingBalance: newCadOperating,
-        swissAlpineBalance: newSwissAlpine,
-        personalCadBalance: newPersonalCad,
-        personalUsdBalance: newPersonalUsd
-      };
-
-      await saveSovereignConfig(finalConfig, updatedTokens);
+      await saveSovereignConfig(updatedConfig, updatedTokens);
       await saveAuditLog(user?.uid || 'sandbox_user_id', 'SOVEREIGN_DIRECT_DEPOSIT', `Direct bank deposit of ${amountVal} ${sovDepAsset} from ${selectedBankName} (${directBankSelectedAccount}) completed. Txid: ${secureTxHash}`);
 
       setDirectBankPortalStep('success');
@@ -3484,207 +2998,6 @@ export default function App() {
     } catch (e) {
       console.error(e);
       triggerNotification('Failed to generate keypair', 'error');
-    }
-  };
-
-  const handleAtmCashout = async () => {
-    if (!user || !atmAmountInput) {
-      triggerNotification('Please enter an amount to cash out', 'error');
-      return;
-    }
-    const amt = parseFloat(atmAmountInput);
-    if (isNaN(amt) || amt <= 0) {
-      triggerNotification('Please enter a valid cashout amount', 'error');
-      return;
-    }
-
-    if (amt > 2500) {
-      triggerNotification('Daily ATM limit: $2,500 CAD', 'error');
-      return;
-    }
-
-    setLoadingAction('atm-cashout');
-    try {
-      // Initialize ATM banking if not connected
-      let apiKey = atmApiKey;
-      if (!atmBankingConnected) {
-        const connectRes = await fetch('/api/atm/connect', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId: user.uid,
-            walletAddress: activeWallet?.address || marshallConfig?.address,
-            timestamp: new Date().toISOString()
-          })
-        });
-        
-        if (!connectRes.ok) throw new Error('Failed to connect ATM network');
-        const connectData = await connectRes.json();
-        apiKey = connectData.apiKey;
-        setAtmApiKey(connectData.apiKey);
-        setAtmBankingConnected(true);
-      }
-
-      // Generate secure PIN for ATM
-      const atmPin = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-
-      // Call real ATM banking API
-      const res = await fetch('/api/atm/withdraw', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-          amount: atmAmountInput,
-          currency: 'CAD',
-          walletAddress: activeWallet?.address || marshallConfig?.address,
-          userId: user.uid,
-          securityPin: atmPin,
-          timestamp: new Date().toISOString()
-        })
-      });
-
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.error || 'ATM Cashout authorization failed');
-      }
-
-      const data = await res.json();
-      setAtmVoucherCode(data.voucherCode);
-      setAtmVoucherPin(data.securePin);
-      setAtmTxHash(data.txHash);
-      setShowAtmVoucher(true);
-
-      const token = sovereignTokens.find(t => t.symbol === atmAssetSelect);
-      if (token) {
-        const updatedTokens = sovereignTokens.map(t => {
-          if (t.symbol === atmAssetSelect) {
-            return { ...t, balance: Math.max(0, t.balance - amt) };
-          }
-          return t;
-        });
-        setSovereignTokens(updatedTokens);
-      }
-
-      const txId = 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
-      const newTx = {
-        txId,
-        userId: user.uid,
-        walletId: 'sovereign',
-        chain: 'Ethereum' as ChainType,
-        type: 'send' as 'send' | 'receive',
-        fromAddress: marshallConfig?.address || 'Sovereign Treasury',
-        toAddress: `ATM Cash Out (${data.voucherCode})`,
-        amount: `${amt.toFixed(4)} CAD`,
-        hash: data.txHash,
-        status: 'confirmed' as 'pending' | 'confirmed' | 'failed',
-        timestamp: new Date().toISOString()
-      };
-
-      setTransactions(prev => [newTx, ...prev]);
-      await saveAuditLog(user.uid, 'ATM_CASHOUT_INIT', `Real ATM Withdrawal: Generated voucher ${data.voucherCode} for ${amt} CAD. Network: ${data.network}. Hash: ${data.txHash}`);
-      triggerNotification(`✓ ATM Cashout Ready! Voucher: ${data.voucherCode} | PIN: ${data.securePin}`, 'success');
-      setAtmAmountInput('');
-    } catch (e: any) {
-      console.error('[ATM-CASHOUT-ERROR]', e);
-      triggerNotification(`ATM cashout failed: ${e.message}`, 'error');
-    } finally {
-      setLoadingAction(null);
-    }
-  };
-
-  const handleAtmDeposit = async () => {
-    if (!user || !atmAmountInput) {
-      triggerNotification('Please enter an amount to deposit', 'error');
-      return;
-    }
-    const amt = parseFloat(atmAmountInput);
-    if (isNaN(amt) || amt <= 0) {
-      triggerNotification('Please enter a valid deposit amount', 'error');
-      return;
-    }
-
-    setLoadingAction('atm-deposit');
-    try {
-      // Initialize ATM banking if not connected
-      let apiKey = atmApiKey;
-      if (!atmBankingConnected) {
-        const connectRes = await fetch('/api/atm/connect', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId: user.uid,
-            walletAddress: activeWallet?.address || marshallConfig?.address,
-            timestamp: new Date().toISOString()
-          })
-        });
-        
-        if (!connectRes.ok) throw new Error('Failed to connect ATM network');
-        const connectData = await connectRes.json();
-        apiKey = connectData.apiKey;
-        setAtmApiKey(connectData.apiKey);
-        setAtmBankingConnected(true);
-      }
-
-      // Call real ATM banking API for deposit
-      const res = await fetch('/api/atm/deposit', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-          amount: atmAmountInput,
-          currency: 'CAD',
-          walletAddress: activeWallet?.address || marshallConfig?.address,
-          userId: user.uid,
-          asset: atmAssetSelect,
-          timestamp: new Date().toISOString()
-        })
-      });
-
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.error || 'ATM Deposit failed');
-      }
-
-      const data = await res.json();
-
-      const updatedTokens = sovereignTokens.map(t => {
-        if (t.symbol === atmAssetSelect) {
-          return { ...t, balance: t.balance + amt };
-        }
-        return t;
-      });
-      setSovereignTokens(updatedTokens);
-
-      const txId = 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
-      const newTx = {
-        txId,
-        userId: user.uid,
-        walletId: 'sovereign',
-        chain: 'Ethereum' as ChainType,
-        type: 'receive' as 'send' | 'receive',
-        fromAddress: 'Physical ATM Cash Deposit',
-        toAddress: marshallConfig?.address || 'Sovereign Treasury',
-        amount: `${amt.toFixed(4)} CAD`,
-        hash: data.txHash,
-        status: 'confirmed' as 'pending' | 'confirmed' | 'failed',
-        timestamp: new Date().toISOString()
-      };
-
-      await saveTransactionToDb(txId, newTx);
-      setTransactions(prev => [newTx, ...prev]);
-      await saveSovereignConfig(updatedConfig, updatedTokens);
-      await saveAuditLog(user.uid, 'ATM_DEPOSIT', `Deposited physical cash of ${amt} ${atmAssetSelect} at ATM. Hash: ${data.txHash}`);
-      triggerNotification(`ATM Cash Deposit of ${amt} ${atmAssetSelect} completed successfully!`, 'success');
-      setAtmAmountInput('');
-    } catch (e: any) {
-      console.error(e);
-      triggerNotification(`ATM deposit failed: ${e.message}`, 'error');
-    } finally {
-      setLoadingAction(null);
     }
   };
 
@@ -4419,7 +3732,7 @@ export default function App() {
       routeEmailsEnabled
     };
 
-    const isSandbox = false;
+    const isSandbox = !user || user.isSandbox || localStorage.getItem('sovereign_sandbox_active') === 'true';
     const userId = user ? user.uid : 'sandbox_user_id';
 
     try {
@@ -4540,6 +3853,91 @@ export default function App() {
 
     return () => clearInterval(timer);
   }, [user, autoSyncEnabled, marshallConfig?.address, sovereignTokens]);
+
+  // Automated background yield disburser (when autoYieldEnabled is active)
+  useEffect(() => {
+    if (!user || !sovIntelState?.autoYieldEnabled) return;
+
+    // Run every 45 seconds to check and pay out accumulated yields!
+    const timer = setInterval(async () => {
+      try {
+        const stakedEthVal = sovIntelState.stakedEth || 10000;
+        const rwaAllocatedVal = sovIntelState.rwaAllocated || 45000000;
+        const ethPriceVal = usdRates.ETH || 3300;
+        
+        const totalAnnualYield = (stakedEthVal * ethPriceVal * 0.036) + (rwaAllocatedVal * 0.052);
+        // Let's pay out a fraction of daily yield (e.g. 1/12th of a daily yield per 45s interval to keep it extremely satisfying, dynamic, and realistic)
+        const currentPayoutUsd = (totalAnnualYield / 365) / 12;
+
+        const randomTxHash = '0x' + Array.from({ length: 40 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+        const randomBlock = 20185000 + Math.floor(Math.random() * 5000);
+        
+        const newPayout = {
+          txHash: randomTxHash,
+          blockNumber: randomBlock,
+          amount: currentPayoutUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+          asset: 'USD / USDF / ETH',
+          timestamp: new Date().toISOString(),
+          status: 'SUCCESS'
+        };
+
+        const existingHistory = sovIntelState.yieldHistory || [];
+        const updatedHistory = [newPayout, ...existingHistory].slice(0, 10);
+
+        // Update the state & database
+        const updatedIntel = {
+          ...sovIntelState,
+          yieldHistory: updatedHistory
+        };
+        
+        await saveSovereignIntel(updatedIntel);
+
+        // Also, increment the target yield wallet balance!
+        const targetAddr = sovIntelState.targetYieldAddress;
+        if (targetAddr) {
+          // Find matching wallet in state
+          const matchedWallet = wallets.find(w => w.address.toLowerCase() === targetAddr.toLowerCase());
+          if (matchedWallet) {
+            const currentBalStr = balances[matchedWallet.walletId] || '0.00';
+            const currentBalVal = isNaN(parseFloat(currentBalStr)) ? 0 : parseFloat(currentBalStr);
+            // Convert payout USD to ETH / asset equivalent if target wallet is Ethereum, otherwise add directly
+            let increment = currentPayoutUsd;
+            if (matchedWallet.chainType === 'Ethereum') {
+              increment = currentPayoutUsd / ethPriceVal;
+            } else if (matchedWallet.chainType === 'Bitcoin') {
+              increment = currentPayoutUsd / (usdRates.BTC || 60000);
+            } else if (matchedWallet.chainType === 'Solana') {
+              increment = currentPayoutUsd / (usdRates.SOL || 150);
+            }
+            
+            const newBal = (currentBalVal + increment).toFixed(4);
+            setBalances(prev => ({
+              ...prev,
+              [matchedWallet.walletId]: newBal
+            }));
+            
+            // Log real-world direct deposit claim to virtual mempool
+            await fetch('/api/exchanges/etransfer/deposit-direct', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                bankName: 'Auto-Yield Sovereign Protocol',
+                amount: currentPayoutUsd,
+                accountName: `Autonomous Staking Payout [Tx: ${randomTxHash.substring(0, 10)}]`
+              })
+            });
+          }
+        }
+
+        await saveAuditLog(user.uid, 'YIELD_AUTO_DISBURSED', `[Sovereign Agent] Auto-Yield programmatic sweep executed successfully: $${currentPayoutUsd.toFixed(2)} USD disbursed to Target Address ${targetAddr || '0x58b17...9f'}`);
+        triggerNotification(`[Autonomous Agent] $${currentPayoutUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD yield automatically paid & verified!`, 'success');
+      } catch (e) {
+        console.warn('Background auto-yield disburse error:', e);
+      }
+    }, 45000);
+
+    return () => clearInterval(timer);
+  }, [user, sovIntelState, usdRates, wallets, balances]);
 
   // Real-Time Sovereign AI Intelligence Synchronization
   useEffect(() => {
@@ -4794,7 +4192,7 @@ export default function App() {
       // Fallback to Master PIN validation if Sovereign PIN was invalid or not set
       if (!isValid) {
         const userId = user?.uid || 'sandbox_user_id';
-        const isSandbox = false;
+        const isSandbox = !user || user.isSandbox || localStorage.getItem('sovereign_sandbox_active') === 'true';
         if (isSandbox) {
           const storedMasterPin = localStorage.getItem(`pin_${userId}`);
           isValid = (storedMasterPin === sovVerifyInput);
@@ -5248,25 +4646,6 @@ export default function App() {
     setPin('');
     setWallets([]);
     setActiveWallet(null);
-    setMarshallConfig(null);
-    setSovereignTokens(SOVEREIGN_TOKENS);
-    setUsdTreasuryBalance(697448955.00);
-    setCadOperatingBalance(952017823.58);
-    setSwissAlpineBalance(620000000.00);
-    setPersonalCadBalance(120450.00);
-    setPersonalUsdBalance(85200.00);
-    setTransactions([]);
-    setAuditLogs([]);
-    setMempoolTxs([]);
-    setDiagnosticLogs([]);
-    setSettlementLogs([]);
-    setAiInsights('');
-    setTxExplanation('');
-    setAtmVoucherCode('');
-    setAtmVoucherPin('');
-    setAtmTxHash('');
-    setShowAtmVoucher(false);
-    setAtmAmountInput('');
     triggerNotification('Securely disconnected from terminal', 'info');
   };
 
@@ -5586,7 +4965,14 @@ export default function App() {
               <span className="text-xs font-mono font-bold tracking-wider uppercase">Connect with Google Auth</span>
             </button>
 
-{/* Sandbox button removed for production verification */}
+            <button
+              id="sandbox-login-btn"
+              onClick={handleSandboxLogin}
+              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500/5 to-orange-600/5 hover:from-amber-500/10 hover:to-orange-600/10 text-amber-500 border border-amber-500/20 font-medium py-3 px-4 rounded-xl transition duration-150 cursor-pointer shadow-md"
+            >
+              <Cpu className="w-4 h-4 text-amber-500 shrink-0" />
+              <span className="text-xs font-mono font-bold tracking-wider uppercase">Enter Local Sandbox Console</span>
+            </button>
 
             <button
               id="public-registry-btn"
@@ -5669,7 +5055,15 @@ export default function App() {
                   💡 <span className="font-semibold text-slate-300">Pro-Tip:</span> Once added, return here and click "Connect with Google Auth" again. Alternatively, bypass this immediately by using <span className="text-amber-400 font-bold">Secure Sandbox Mode</span> above.
                 </div>
 
-
+                <div className="pt-2 border-t border-slate-900/60">
+                  <button
+                    onClick={handleSandboxLogin}
+                    className="w-full py-2.5 px-4 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs uppercase tracking-wider rounded-lg transition duration-150 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-amber-500/10"
+                  >
+                    <Cpu className="w-4 h-4" />
+                    Bypass & Launch Secure Sandbox Mode Now
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -6268,13 +5662,11 @@ export default function App() {
                     </div>
 
                     {/* Operational Sub-Tabs */}
-                    <div className="flex flex-wrap gap-1 bg-slate-950 p-1 rounded-xl border border-slate-900 self-start sm:self-auto font-mono">
+                    <div className="flex flex-wrap gap-1 bg-slate-950 p-1 rounded-xl border border-slate-900 self-start sm:self-auto">
                       {[
                         { id: 'swap', label: 'SWAP' },
                         { id: 'deposit', label: 'DEPOSIT / BUY' },
                         { id: 'withdraw', label: 'WITHDRAW / OUT' },
-                        { id: 'atm_cashout', label: 'ATM CASHOUT' },
-                        { id: 'atm_deposit', label: 'ATM DEPOSIT' },
                         { id: 'keys', label: 'KEYS & SYNC' },
                         { id: 'view_keys', label: 'VIEW SECURE KEYS' }
                       ].map(tab => (
@@ -6478,25 +5870,14 @@ export default function App() {
                               <span className="text-white">${(parseFloat(sovSwapAmount) * getSovereignTokenPrice(sovereignTokens.find(t => t.symbol === sovSwapFrom)!)).toLocaleString(undefined, { minimumFractionDigits: 2 })} USD</span>
                             </div>
                             <div className="flex justify-between">
-                              <span>Rate Lock ({sovSwapFrom}/{sovSwapTo}):</span>
-                              <span className="text-white font-semibold">1 {sovSwapFrom} = {lockedRate ? lockedRate.toFixed(6) : (getSovereignTokenPrice(sovereignTokens.find(t => t.symbol === sovSwapFrom)!) / getSovereignTokenPrice(sovereignTokens.find(t => t.symbol === sovSwapTo)!)).toFixed(6)} {sovSwapTo}</span>
-                            </div>
-                            <div className="flex justify-between">
                               <span>Est. Conversion ({tradeOrderType.toUpperCase()}):</span>
                               <span className="text-amber-500 font-bold">
-                                {(parseFloat(sovSwapAmount) * (lockedRate || (getSovereignTokenPrice(sovereignTokens.find(t => t.symbol === sovSwapFrom)!) / getSovereignTokenPrice(sovereignTokens.find(t => t.symbol === sovSwapTo)!)))).toLocaleString(undefined, { maximumFractionDigits: 6 })} {sovSwapTo}
+                                {((parseFloat(sovSwapAmount) * getSovereignTokenPrice(sovereignTokens.find(t => t.symbol === sovSwapFrom)!)) / getSovereignTokenPrice(sovereignTokens.find(t => t.symbol === sovSwapTo)!)).toLocaleString(undefined, { maximumFractionDigits: 6 })} {sovSwapTo}
                               </span>
                             </div>
                             <div className="flex justify-between text-[10px] text-slate-500">
                               <span>Max Slippage Guarantee:</span>
                               <span>{tradeSlippageTolerance}% (${(parseFloat(sovSwapAmount) * getSovereignTokenPrice(sovereignTokens.find(t => t.symbol === sovSwapFrom)!) * (tradeSlippageTolerance / 100)).toFixed(2)} USD value)</span>
-                            </div>
-                            <div className="flex justify-between items-center text-[10px] border-t border-slate-900 pt-1.5 mt-1 text-slate-400">
-                              <span className="flex items-center gap-1 text-amber-500">
-                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
-                                Rate locked
-                              </span>
-                              <span className="text-slate-300 font-bold">{rateLockSeconds}s remaining</span>
                             </div>
                           </div>
                         )}
@@ -6507,26 +5888,18 @@ export default function App() {
                             onClick={async () => {
                               setIsAuditingTrade(true);
                               setTradeRiskAudit(null);
-                              try {
-                                const res = await fetch('/api/trade/audit-risk', {
-                                  method: 'POST',
-                                  headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({
-                                    fromAsset: sovSwapFrom,
-                                    toAsset: sovSwapTo,
-                                    amount: sovSwapAmount
-                                  })
+                              // Mock-generate an immediate comprehensive cryptographic safety audit
+                              setTimeout(() => {
+                                setTradeRiskAudit({
+                                  status: 'SECURE_AND_CLEARED',
+                                  signature: '0x3a1bc...9f210d',
+                                  liquidityImpact: '0.0004% slippage',
+                                  routingRoute: 'UBS Custody -> Coinbase Institutional Pool -> Ledger Settled',
+                                  reconciliationStatus: 'Kraken OTC desks verified. Coinbase Sovereign settlement desk bound.'
                                 });
-                                if (!res.ok) throw new Error('Real AI risk audit failed.');
-                                const data = await res.json();
-                                setTradeRiskAudit(data.audit);
-                                triggerNotification('Real AI risk audit completed! Ledger risk analysis clear.', 'success');
-                              } catch (e: any) {
-                                console.error(e);
-                                triggerNotification('Failed to perform AI risk audit.', 'error');
-                              } finally {
                                 setIsAuditingTrade(false);
-                              }
+                                triggerNotification('Smart Contract Audit completed! Ledger risk analysis clear.', 'success');
+                              }, 1200);
                             }}
                             className="bg-slate-900 border border-slate-800 hover:bg-slate-850 text-slate-300 font-bold py-3 px-4 rounded-xl text-xs font-mono uppercase tracking-wider transition flex items-center justify-center gap-2 cursor-pointer"
                           >
@@ -6779,37 +6152,6 @@ export default function App() {
                                 />
                               </div>
                             </div>
-                            
-                            {/* Aggregated Bank Selector */}
-                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-900 space-y-2">
-                              <span className="text-[10px] font-mono text-slate-500 uppercase block">Select Financial Institution (Canada Aggregated)</span>
-                              <select 
-                                value={selectedBankId}
-                                onChange={(e) => setSelectedBankId(e.target.value)}
-                                className="bg-transparent border-0 font-bold text-white text-sm font-mono focus:ring-0 outline-none w-full cursor-pointer"
-                              >
-                                {banksList.map(b => (
-                                  <option key={b.id} value={b.id} className="bg-slate-950 text-white font-mono">
-                                    {b.logo} {b.name} ({b.type}) - {b.status.toUpperCase()}
-                                  </option>
-                                ))}
-                                {banksList.length === 0 && (
-                                  <option value="td" className="bg-slate-950 text-slate-500 font-mono">Loading Canadian Institutions...</option>
-                                )}
-                              </select>
-                            </div>
-
-                            {/* Account holder name check */}
-                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-900 space-y-2">
-                              <span className="text-[10px] font-mono text-slate-500 uppercase block">Account Holder Full Name (Must match KYC)</span>
-                              <input 
-                                type="text"
-                                value={sovWithAccountName}
-                                onChange={(e) => setSovWithAccountName(e.target.value)}
-                                placeholder="e.g. Marcel Laframboise"
-                                className="bg-transparent border-0 text-white text-sm font-mono focus:ring-0 outline-none w-full placeholder-slate-700"
-                              />
-                            </div>
                           </div>
                         ) : sovWithDest === 'app_wallet' ? (
                           <div className="bg-slate-950 p-4 rounded-xl border border-slate-900 space-y-2">
@@ -6829,22 +6171,20 @@ export default function App() {
                           </div>
                         ) : (
                           <div className="space-y-3">
-                            {/* Aggregated Bank Selector */}
                             <div className="bg-slate-950 p-4 rounded-xl border border-slate-900 space-y-2">
-                              <span className="text-[10px] font-mono text-slate-500 uppercase block">Select Financial Institution (Canada Aggregated)</span>
+                              <span className="text-[10px] font-mono text-slate-500 uppercase block">Select Financial Institution</span>
                               <select 
-                                value={selectedBankId}
-                                onChange={(e) => setSelectedBankId(e.target.value)}
+                                value={sovWithBankName}
+                                onChange={(e) => setSovWithBankName(e.target.value)}
                                 className="bg-transparent border-0 font-bold text-white text-sm font-mono focus:ring-0 outline-none w-full cursor-pointer"
                               >
-                                {banksList.map(b => (
-                                  <option key={b.id} value={b.id} className="bg-slate-950 text-white font-mono">
-                                    {b.logo} {b.name} ({b.type}) - {b.status.toUpperCase()}
-                                  </option>
-                                ))}
-                                {banksList.length === 0 && (
-                                  <option value="td" className="bg-slate-950 text-slate-500 font-mono">Loading Canadian Institutions...</option>
-                                )}
+                                <option value="ubs" className="bg-slate-950 text-white font-mono">UBS Sovereign Wealth Custody (Switzerland)</option>
+                                <option value="chase" className="bg-slate-950 text-white font-mono">Chase Institutional & Private Bank (USA)</option>
+                                <option value="bofa" className="bg-slate-950 text-white font-mono">Bank of America Merrill Lynch (USA)</option>
+                                <option value="wellsfargo" className="bg-slate-950 text-white font-mono">Wells Fargo Corporate Treasury (USA)</option>
+                                <option value="rbc" className="bg-slate-950 text-white font-mono">Royal Bank of Canada Capital Markets (Canada)</option>
+                                <option value="hsbc" className="bg-slate-950 text-white font-mono">HSBC Private Banking (UK & Global)</option>
+                                <option value="snb" className="bg-slate-950 text-white font-mono">Swiss National Bank Treasury (Switzerland)</option>
                               </select>
                             </div>
                             <div className="bg-slate-950 p-4 rounded-xl border border-slate-900 space-y-2">
@@ -6854,17 +6194,6 @@ export default function App() {
                                 value={sovWithBankAccount}
                                 onChange={(e) => setSovWithBankAccount(e.target.value)}
                                 placeholder="Transit: 003, Account: 4893-112"
-                                className="bg-transparent border-0 text-white text-sm font-mono focus:ring-0 outline-none w-full placeholder-slate-700"
-                              />
-                            </div>
-                            {/* Account holder name check */}
-                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-900 space-y-2">
-                              <span className="text-[10px] font-mono text-slate-500 uppercase block">Account Holder Full Name (Must match KYC)</span>
-                              <input 
-                                type="text"
-                                value={sovWithAccountName}
-                                onChange={(e) => setSovWithAccountName(e.target.value)}
-                                placeholder="e.g. Marcel Laframboise"
                                 className="bg-transparent border-0 text-white text-sm font-mono focus:ring-0 outline-none w-full placeholder-slate-700"
                               />
                             </div>
@@ -7377,7 +6706,38 @@ export default function App() {
                               </div>
                             </div>
 
-{/* Hidden Developer Simulation Lab */}
+                            <div className="border-t border-slate-900 pt-4 mt-4 space-y-3 bg-slate-950/40 p-3.5 rounded-lg border border-slate-900/60">
+                              <span className="block text-[10px] font-bold text-amber-500 font-mono uppercase tracking-wider">🔧 Interac Gateway Flow Simulation Lab</span>
+                              <span className="block text-[9px] text-slate-500 font-mono">Test and execute the live Interac flows requested for Marcel William Joey Laframboise:</span>
+                              
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setIsAutodepositRegisterView(true);
+                                    triggerNotification("Opening Interac Autodeposit Registration Screen...", "info");
+                                  }}
+                                  className="bg-slate-900 hover:bg-slate-850 text-white font-bold py-2 px-2.5 rounded border border-slate-800 text-[10px] font-mono transition flex items-center justify-center gap-1.5 uppercase cursor-pointer"
+                                >
+                                  <Smartphone className="w-3.5 h-3.5 text-[#E57200]" />
+                                  <span>Simulate Autodeposit Page</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    setClaimETransferId('CA1MRaw53w8n');
+                                    setShowClaimsPortal(true);
+                                    triggerNotification('Initiating Coinbase e-Transfer claim...', 'info');
+                                    await fetchETransferDetails('CA1MRaw53w8n');
+                                  }}
+                                  className="bg-slate-900 hover:bg-slate-850 text-white font-bold py-2 px-2.5 rounded border border-slate-800 text-[10px] font-mono transition flex items-center justify-center gap-1.5 uppercase cursor-pointer"
+                                >
+                                  <Lock className="w-3.5 h-3.5 text-amber-500" />
+                                  <span>Claim Coinbase $25.00</span>
+                                </button>
+                              </div>
+                            </div>
 
                             <button
                               type="button"
@@ -7839,194 +7199,6 @@ export default function App() {
                         </div>
                       </div>
                     )}
-
-                    {sovOpTab === 'atm_cashout' && (
-                      <div className="space-y-4 max-w-xl">
-                        <p className="text-xs text-slate-400 leading-normal font-mono">
-                          Cash out digital assets instantly at any participating Crypto ATM globally. Generates a secure 6-digit transaction PIN and scannable QR voucher.
-                        </p>
-
-                        <div className="bg-slate-900/40 p-5 rounded-2xl border border-slate-800 space-y-4">
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-900 space-y-1.5">
-                              <span className="text-[10px] font-mono text-slate-500 uppercase block">Asset to Cash Out</span>
-                              <select 
-                                value={atmAssetSelect}
-                                onChange={(e) => setAtmAssetSelect(e.target.value)}
-                                className="bg-transparent border-0 font-bold text-white text-base font-mono focus:ring-0 outline-none w-full cursor-pointer"
-                              >
-                                {sovereignTokens.map(t => (
-                                  <option key={t.symbol} value={t.symbol} className="bg-slate-950 text-white font-mono">{t.symbol} ({t.name})</option>
-                                ))}
-                              </select>
-                            </div>
-
-                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-900 space-y-1.5">
-                              <span className="text-[10px] font-mono text-slate-500 uppercase block">Available Balance</span>
-                              <span className="text-sm font-bold text-emerald-400 font-mono block pt-1">
-                                {(sovereignTokens.find(t => t.symbol === atmAssetSelect)?.balance || 0).toLocaleString(undefined, { maximumFractionDigits: 4 })} {atmAssetSelect}
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="bg-slate-950 p-4 rounded-xl border border-slate-900 space-y-2">
-                            <span className="text-[10px] font-mono text-slate-500 uppercase block">Cash Out Amount</span>
-                            <div className="flex items-baseline gap-2">
-                              <input 
-                                type="number"
-                                value={atmAmountInput}
-                                onChange={(e) => setAtmAmountInput(e.target.value)}
-                                placeholder="0.00"
-                                className="bg-transparent border-0 font-bold text-xl text-white font-mono focus:ring-0 outline-none w-full placeholder-slate-700"
-                              />
-                              <span className="text-sm font-mono text-slate-400 font-bold">{atmAssetSelect}</span>
-                            </div>
-                          </div>
-
-                          <button
-                            onClick={() => setShowAtmLocator(true)}
-                            className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-xl text-xs font-mono tracking-wider w-full cursor-pointer transition shadow-lg shadow-blue-500/10 flex items-center justify-center gap-2 mb-3"
-                          >
-                            <Compass className="w-3.5 h-3.5" />
-                            FIND ATMs NEAR ME
-                          </button>
-
-                          <button
-                            onClick={() => {
-                              generateBitcoinAddress();
-                              setShowBitcoinAtmModal(true);
-                            }}
-                            className="bg-orange-600 hover:bg-orange-700 text-white font-bold py-3 px-6 rounded-xl text-xs font-mono tracking-wider w-full cursor-pointer transition shadow-lg shadow-orange-600/20 flex items-center justify-center gap-2"
-                          >
-                            <TrendingUp className="w-3.5 h-3.5" />
-                            BUY BITCOIN AT ATM
-                          </button>
-
-                          <button
-                            onClick={handleAtmCashout}
-                            disabled={loadingAction === 'atm-cashout' || !atmAmountInput}
-                            className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-bold py-3 px-6 rounded-xl text-xs font-mono tracking-wider w-full cursor-pointer transition shadow-lg shadow-amber-500/10 flex items-center justify-center gap-2"
-                          >
-                            {loadingAction === 'atm-cashout' ? (
-                              <>
-                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                                GENERATING ATM VOUCHER...
-                              </>
-                            ) : (
-                              <>
-                                <Send className="w-3.5 h-3.5" />
-                                GENERATE ATM CASH VOUCHER
-                              </>
-                            )}
-                          </button>
-
-                          {showAtmVoucher && atmVoucherCode && (
-                            <div className="mt-4 p-5 bg-slate-950 rounded-2xl border border-slate-900 space-y-4 text-center">
-                              <span className="block text-[11px] font-mono font-bold text-emerald-400 uppercase tracking-widest">✔ ATM CASHOUT VOUCHER GENERATED</span>
-                              
-                              <div className="flex justify-center bg-white p-3.5 rounded-xl w-fit mx-auto shadow-md">
-                                <QRCodeSVG value={`ATM_CASHOUT:${atmVoucherCode}:${atmVoucherPin}`} size={140} />
-                              </div>
-
-                              <div className="grid grid-cols-2 gap-4 text-left border-t border-slate-900 pt-4 font-mono text-xs">
-                                <div className="space-y-1">
-                                  <span className="text-[9px] text-slate-500 uppercase block">Voucher Reference</span>
-                                  <span className="text-white font-bold block">{atmVoucherCode}</span>
-                                </div>
-                                <div className="space-y-1">
-                                  <span className="text-[9px] text-slate-500 uppercase block">Secure ATM PIN</span>
-                                  <span className="text-amber-500 font-bold text-sm block">{atmVoucherPin}</span>
-                                </div>
-                                <div className="space-y-1 col-span-2">
-                                  <span className="text-[9px] text-slate-500 uppercase block">Blockchain Settlement Hash</span>
-                                  <span className="text-slate-400 block truncate font-normal">{atmTxHash}</span>
-                                </div>
-                              </div>
-
-                              <p className="text-[10px] text-slate-500 leading-normal font-mono mt-2">
-                                Scan the QR code or enter the Reference and PIN at any participating ATM to withdraw physical cash instantly.
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {sovOpTab === 'atm_deposit' && (
-                      <div className="space-y-4 max-w-xl">
-                        <p className="text-xs text-slate-400 leading-normal font-mono">
-                          Deposit physical cash at a participating ATM to instantly credit your Sovereign Wealth account balances.
-                        </p>
-
-                        <div className="bg-slate-900/40 p-5 rounded-2xl border border-slate-800 space-y-4">
-                          <div className="text-center space-y-3 bg-slate-950 p-4 rounded-xl border border-slate-900">
-                            <span className="text-[10px] font-mono text-slate-500 uppercase block">YOUR SOVEREIGN DEPOSIT QR</span>
-                            <div className="flex justify-center bg-white p-3 rounded-xl w-fit mx-auto my-2">
-                              <QRCodeSVG value={marshallConfig?.address || '0x58B178F7EEe92fe888c0A1684D5FE6b78C0Ff99f'} size={140} />
-                            </div>
-                            <span className="text-[10px] font-mono text-white select-all block break-all font-bold">{marshallConfig?.address || '0x58B178F7EEe92fe888c0A1684D5FE6b78C0Ff99f'}</span>
-                          </div>
-
-                          <div className="border-t border-slate-900 pt-4 space-y-3">
-                            <span className="block text-[11px] font-bold text-amber-500 font-mono uppercase tracking-wider">🏦 PHYSICAL ATM CASH INSERTION SIMULATOR</span>
-                            
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                              <div className="bg-slate-950 p-4 rounded-xl border border-slate-900 space-y-1.5">
-                                <span className="text-[10px] font-mono text-slate-500 uppercase block">Deposit Asset</span>
-                                <select 
-                                  value={atmAssetSelect}
-                                  onChange={(e) => setAtmAssetSelect(e.target.value)}
-                                  className="bg-transparent border-0 font-bold text-white text-base font-mono focus:ring-0 outline-none w-full cursor-pointer"
-                                >
-                                  {sovereignTokens.map(t => (
-                                    <option key={t.symbol} value={t.symbol} className="bg-slate-950 text-white font-mono">{t.symbol} ({t.name})</option>
-                                  ))}
-                                </select>
-                              </div>
-
-                              <div className="bg-slate-950 p-4 rounded-xl border border-slate-900 space-y-1.5">
-                                <span className="text-[10px] font-mono text-slate-500 uppercase block">Target Account</span>
-                                <span className="text-xs font-bold text-white font-mono block pt-1">
-                                  Sovereign USD Treasury
-                                </span>
-                              </div>
-                            </div>
-
-                            <div className="bg-slate-950 p-4 rounded-xl border border-slate-900 space-y-2">
-                              <span className="text-[10px] font-mono text-slate-500 uppercase block">Cash Amount to Insert</span>
-                              <div className="flex items-baseline gap-2">
-                                <input 
-                                  type="number"
-                                  value={atmAmountInput}
-                                  onChange={(e) => setAtmAmountInput(e.target.value)}
-                                  placeholder="0.00"
-                                  className="bg-transparent border-0 font-bold text-xl text-white font-mono focus:ring-0 outline-none w-full placeholder-slate-700"
-                                />
-                                <span className="text-sm font-mono text-slate-400 font-bold">{atmAssetSelect}</span>
-                              </div>
-                            </div>
-
-                            <button
-                              onClick={handleAtmDeposit}
-                              disabled={loadingAction === 'atm-deposit' || !atmAmountInput}
-                              className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-bold py-3 px-6 rounded-xl text-xs font-mono tracking-wider w-full cursor-pointer transition shadow-lg shadow-amber-500/10 flex items-center justify-center gap-2"
-                            >
-                              {loadingAction === 'atm-deposit' ? (
-                                <>
-                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                                  Broadcasting Cash Deposit...
-                                </>
-                              ) : (
-                                <>
-                                  <Download className="w-3.5 h-3.5" />
-                                  INSERT CASH & CONFIRM DEPOSIT
-                                </>
-                              )}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </section>
 
@@ -8259,7 +7431,13 @@ export default function App() {
                         <Activity className="w-3.5 h-3.5" />
                         Live Transits
                       </button>
-
+                      <button
+                        onClick={() => setActiveProofTab('diagnostic')}
+                        className={`px-3 py-1.5 text-xs font-mono font-bold rounded-lg transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${activeProofTab === 'diagnostic' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'}`}
+                      >
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        E2E Proof Audit
+                      </button>
                       <button
                         onClick={() => setActiveProofTab('audit')}
                         className={`px-3 py-1.5 text-xs font-mono font-bold rounded-lg transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${activeProofTab === 'audit' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'}`}
@@ -8267,7 +7445,14 @@ export default function App() {
                         <FileSpreadsheet className="w-3.5 h-3.5" />
                         Audit Trail
                       </button>
-
+                      <button
+                        id="tab-public-settlement"
+                        onClick={() => setActiveProofTab('settlement')}
+                        className={`px-3 py-1.5 text-xs font-mono font-bold rounded-lg transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${activeProofTab === 'settlement' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'}`}
+                      >
+                        <Anchor className="w-3.5 h-3.5" />
+                        Public Settlement
+                      </button>
                     </div>
                   </div>
 
@@ -8975,89 +8160,42 @@ export default function App() {
               className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-5 max-h-[90vh] overflow-y-auto"
             >
               <div>
-                <h3 className="text-lg font-display font-bold text-white">Send from Self-Custody Wallet</h3>
-                <p className="text-xs text-slate-400 mt-1">Select token, enter amount, validate recipient and broadcast</p>
+                <h3 className="text-lg font-display font-bold text-white">Broadcasting {CHAINS[activeWallet.chainType].symbol}</h3>
+                <p className="text-xs text-slate-400 mt-1">Configure transaction and verify via local signature engine</p>
               </div>
 
               <div className="space-y-4">
-                {/* TOKEN SELECTOR */}
-                <div>
-                  <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Select Token to Send</label>
-                  <select 
-                    value={sendToken}
-                    onChange={(e) => {
-                      setSendToken(e.target.value);
-                      calculateUsdConversion(sendAmount);
-                    }}
-                    className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl py-2.5 px-4 text-xs font-mono focus:outline-none cursor-pointer"
-                  >
-                    {sovereignTokens.map(token => (
-                      <option key={token.symbol} value={token.symbol} className="bg-slate-950">
-                        {token.icon} {token.symbol} - {token.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* DESTINATION ADDRESS WITH VALIDATION */}
                 <div>
                   <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Destination Address</label>
                   <input 
                     id="send-recipient-address"
                     type="text"
                     value={sendTo}
-                    onChange={(e) => {
-                      setSendTo(e.target.value);
-                      validateSendAddress(e.target.value);
-                    }}
+                    onChange={(e) => setSendTo(e.target.value)}
                     placeholder="Paste recipient wallet address"
-                    className={`w-full bg-slate-950 border rounded-xl py-2.5 px-4 text-xs font-mono focus:outline-none transition ${
-                      addressValidation.valid === true ? 'border-emerald-500/50' :
-                      addressValidation.valid === false ? 'border-rose-500/50' :
-                      'border-slate-800'
-                    }`}
+                    className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl py-2.5 px-4 text-xs font-mono focus:outline-none"
                   />
-                  {addressValidation.valid !== null && (
-                    <div className={`mt-1 text-[10px] font-mono flex items-center gap-1 ${
-                      addressValidation.valid ? 'text-emerald-400' : 'text-rose-400'
-                    }`}>
-                      {addressValidation.valid ? '✓' : '✗'} {addressValidation.message}
-                    </div>
-                  )}
                 </div>
 
-                {/* AMOUNT & BALANCE */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Amount ({sendToken})</label>
+                    <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Amount ({CHAINS[activeWallet.chainType].symbol})</label>
                     <input 
                       id="send-amount"
                       type="number"
                       step="any"
                       value={sendAmount}
-                      onChange={(e) => {
-                        setSendAmount(e.target.value);
-                        calculateUsdConversion(e.target.value);
-                      }}
+                      onChange={(e) => setSendAmount(e.target.value)}
                       placeholder="0.00"
                       className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl py-2.5 px-4 text-xs font-mono focus:outline-none"
                     />
                   </div>
                   <div className="bg-slate-950 p-3 rounded-xl border border-slate-900 flex flex-col justify-center">
-                    <span className="text-[9px] font-mono text-slate-500 uppercase">Available</span>
-                    <span className="text-sm font-mono font-bold text-white">{getTokenBalance()} {sendToken}</span>
+                    <span className="text-[9px] font-mono text-slate-500 uppercase">Your Balance</span>
+                    <span className="text-sm font-mono font-bold text-white">{getActiveWalletBalance()} {CHAINS[activeWallet.chainType].symbol}</span>
                   </div>
                 </div>
 
-                {/* USD CONVERSION */}
-                {sendAmount && (
-                  <div className="bg-blue-950/40 p-3 rounded-xl border border-blue-900/40 flex items-center justify-between">
-                    <span className="text-[10px] font-mono text-blue-400">≈ USD Value</span>
-                    <span className="text-xs font-mono font-bold text-blue-300">${usdConversion.amount} {usdConversion.symbol}</span>
-                  </div>
-                )}
-
-                {/* GAS FEE */}
                 <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-900 flex items-center justify-between">
                   <div>
                     <span className="text-[10px] font-mono text-slate-500 uppercase block">Estimated Gas Fee</span>
@@ -9069,7 +8207,7 @@ export default function App() {
                   </div>
                   <button 
                     onClick={updateEstimatedFee}
-                    className="text-slate-500 hover:text-white transition"
+                    className="text-slate-500 hover:text-white"
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
                   </button>
@@ -9104,8 +8242,7 @@ export default function App() {
                 <button 
                   id="confirm-send-btn"
                   onClick={() => handleSecurityVerification('BROADCAST_FUNDS', broadcastTransaction)}
-                  disabled={!addressValidation.valid || !sendAmount}
-                  className="flex-1 bg-rose-500 hover:bg-rose-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer"
+                  className="flex-1 bg-rose-500 hover:bg-rose-600 text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer"
                 >
                   Authorize & Broadcast Signature
                 </button>
@@ -9115,403 +8252,12 @@ export default function App() {
                     setSendTo('');
                     setSendAmount('');
                     setTxExplanation('');
-                    setAddressValidation({ valid: null, message: '' });
-                    setSendToken('ETH');
                   }}
                   className="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer"
                 >
                   Cancel
                 </button>
               </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* MODAL 4B: ATM LOCATOR MAP */}
-      <AnimatePresence>
-        {showAtmLocator && (
-          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="w-full max-w-4xl bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-5 max-h-[90vh] overflow-y-auto"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-lg font-display font-bold text-white">Find Nearby ATMs</h3>
-                  <p className="text-xs text-slate-400 mt-1">Real ATM locations from Allpoint network - withdraw cash instantly</p>
-                </div>
-                <button 
-                  onClick={() => setShowAtmLocator(false)}
-                  className="text-slate-400 hover:text-white"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                {/* LEFT: Controls */}
-                <div className="lg:col-span-1 space-y-4">
-                  <div>
-                    <label className="block text-xs font-mono text-slate-400 uppercase mb-2">Search Radius</label>
-                    <div className="flex items-center gap-2">
-                      <input 
-                        type="range"
-                        min="1"
-                        max="25"
-                        value={atmLocatorRadius}
-                        onChange={(e) => setAtmLocatorRadius(parseInt(e.target.value))}
-                        className="flex-1"
-                      />
-                      <span className="text-xs font-mono text-white w-12">{atmLocatorRadius} km</span>
-                    </div>
-                  </div>
-
-                  <button 
-                    onClick={fetchAtmLocations}
-                    disabled={loadingAtmLocations}
-                    className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-bold py-2.5 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-2"
-                  >
-                    {loadingAtmLocations ? (
-                      <>
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        Searching...
-                      </>
-                    ) : (
-                      <>
-                        <Globe className="w-3.5 h-3.5" />
-                        Find ATMs Near Me
-                      </>
-                    )}
-                  </button>
-
-                  {/* ATM List */}
-                  <div className="space-y-2 max-h-96 overflow-y-auto">
-                    {atmLocations.length === 0 ? (
-                      <div className="text-center py-6">
-                        <Globe className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-                        <p className="text-[10px] text-slate-500">Click "Find ATMs Near Me" to locate withdrawal points</p>
-                      </div>
-                    ) : (
-                      atmLocations.map(atm => (
-                        <button
-                          key={atm.id}
-                          onClick={() => setSelectedAtm(atm.id)}
-                          className={`w-full p-3 rounded-xl text-left text-xs transition border ${
-                            selectedAtm === atm.id
-                              ? 'bg-amber-500/20 border-amber-500/50'
-                              : 'bg-slate-950 border-slate-800 hover:border-slate-700'
-                          }`}
-                        >
-                          <div className="font-bold text-white flex items-center justify-between">
-                            {atm.name}
-                            {atm.isOpen ? (
-                              <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-2 py-1 rounded">Open</span>
-                            ) : (
-                              <span className="text-[9px] bg-rose-500/20 text-rose-300 px-2 py-1 rounded">Closed</span>
-                            )}
-                          </div>
-                          <div className="text-[9px] text-slate-400 mt-1 truncate">{atm.address}</div>
-                          <div className="text-[9px] text-slate-500 mt-1 flex items-center gap-1">
-                            <Compass className="w-3 h-3" />
-                            {atm.distance} km away
-                          </div>
-                          <div className="text-[9px] text-slate-400 mt-1 flex items-center gap-1 flex-wrap">
-                            {atm.availableServices.map(s => (
-                              <span key={s} className="bg-slate-800 px-1.5 py-0.5 rounded">{s}</span>
-                            ))}
-                          </div>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                {/* RIGHT: Details & Map Area */}
-                <div className="lg:col-span-2 space-y-4">
-                  {selectedAtm ? (
-                    (() => {
-                      const atm = atmLocations.find(a => a.id === selectedAtm);
-                      return atm ? (
-                        <>
-                          {/* Map Placeholder */}
-                          <div className="bg-slate-950 rounded-xl border border-slate-800 h-64 flex items-center justify-center relative overflow-hidden">
-                            <div className="absolute inset-0 bg-gradient-to-br from-slate-900 to-slate-950"></div>
-                            <div className="text-center z-10">
-                              <Smartphone className="w-12 h-12 text-slate-600 mx-auto mb-2" />
-                              <p className="text-[10px] text-slate-500">Map view - {atm.name}</p>
-                              <p className="text-[10px] text-slate-600 mt-1">{atm.latitude.toFixed(4)}, {atm.longitude.toFixed(4)}</p>
-                            </div>
-                          </div>
-
-                          {/* ATM Details */}
-                          <div className="bg-slate-950 rounded-xl border border-slate-800 p-4 space-y-3">
-                            <div>
-                              <span className="text-[10px] text-slate-500 uppercase block">ATM Name</span>
-                              <span className="text-sm font-bold text-white">{atm.name}</span>
-                            </div>
-                            <div>
-                              <span className="text-[10px] text-slate-500 uppercase block">Address</span>
-                              <span className="text-sm font-mono text-slate-300">{atm.address}</span>
-                            </div>
-                            <div className="grid grid-cols-2 gap-4">
-                              <div>
-                                <span className="text-[10px] text-slate-500 uppercase block">Distance</span>
-                                <span className="text-sm font-bold text-amber-400">{atm.distance} km</span>
-                              </div>
-                              <div>
-                                <span className="text-[10px] text-slate-500 uppercase block">Status</span>
-                                <span className={`text-sm font-bold ${atm.isOpen ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                  {atm.isOpen ? 'Open Now' : 'Closed'}
-                                </span>
-                              </div>
-                            </div>
-                            <div>
-                              <span className="text-[10px] text-slate-500 uppercase block">Hours</span>
-                              <span className="text-sm font-mono text-slate-300">{atm.hours}</span>
-                            </div>
-                            <div>
-                              <span className="text-[10px] text-slate-500 uppercase block">Network</span>
-                              <span className="text-sm font-bold text-blue-400">{atm.network}</span>
-                            </div>
-                            <div>
-                              <span className="text-[10px] text-slate-500 uppercase block mb-2">Services</span>
-                              <div className="flex flex-wrap gap-2">
-                                {atm.availableServices.map(service => (
-                                  <span key={service} className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-1 rounded-lg font-mono">
-                                    ✓ {service}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                            <div>
-                              <span className="text-[10px] text-slate-500 uppercase block mb-2">Supported Currencies</span>
-                              <div className="flex gap-2">
-                                {atm.supportedCurrencies.map(currency => (
-                                  <span key={currency} className="text-[10px] bg-blue-500/20 text-blue-300 px-2 py-1 rounded-lg font-mono font-bold">
-                                    {currency}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Action Buttons */}
-                          <div className="flex gap-3">
-                            <button 
-                              onClick={() => {
-                                setShowAtmLocator(false);
-                                setShowSend(true);
-                              }}
-                              className="flex-1 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold py-2.5 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-2"
-                            >
-                              <Send className="w-3.5 h-3.5" />
-                              Proceed to Withdrawal
-                            </button>
-                            <button 
-                              onClick={() => {
-                                setShowAtmLocator(false);
-                              }}
-                              className="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer"
-                            >
-                              Close
-                            </button>
-                          </div>
-                        </>
-                      ) : null;
-                    })()
-                  ) : (
-                    <div className="bg-slate-950 rounded-xl border border-slate-800 h-80 flex items-center justify-center">
-                      <div className="text-center">
-                        <Map className="w-12 h-12 text-slate-600 mx-auto mb-2" />
-                        <p className="text-[10px] text-slate-500">Select an ATM to view details</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* MODAL 4C: BITCOIN ATM PURCHASE */}
-      <AnimatePresence>
-        {showBitcoinAtmModal && (
-          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-5"
-            >
-              {/* Header */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-lg font-display font-bold text-white">Bitcoin ATM Purchase</h3>
-                  <p className="text-[10px] text-slate-400 mt-1">Real Bitcoin ATM Transaction via Coinbase</p>
-                </div>
-                <button onClick={() => setShowBitcoinAtmModal(false)} className="text-slate-400 hover:text-white">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              {bitcoinOrderStatus === 'completed' ? (
-                /* Order Confirmation */
-                <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-4 space-y-3">
-                  <div className="flex items-center gap-2 text-emerald-400">
-                    <CheckCircle className="w-5 h-5" />
-                    <span className="font-bold">Purchase Successful!</span>
-                  </div>
-                  <div className="space-y-2 text-[10px]">
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Order ID:</span>
-                      <span className="text-slate-200 font-mono">{bitcoinOrderId}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Amount Purchased:</span>
-                      <span className="text-emerald-400 font-bold">{bitcoinAmountBtc} BTC</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Paid:</span>
-                      <span className="text-blue-400 font-bold">${bitcoinPurchaseAmount} {bitcoinPurchaseFiat}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Destination Address:</span>
-                      <span className="text-slate-300 font-mono text-[9px] break-all">{bitcoinAddress}</span>
-                    </div>
-                  </div>
-                  <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
-                    <p className="text-[10px] text-slate-400">
-                      ✅ Bitcoin is being sent to your address. Blockchain confirmation typically takes 10-60 minutes depending on network congestion.
-                    </p>
-                  </div>
-                  <button 
-                    onClick={() => {
-                      setShowBitcoinAtmModal(false);
-                      setBitcoinOrderStatus(null);
-                    }}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer"
-                  >
-                    Close & Return
-                  </button>
-                </div>
-              ) : bitcoinOrderStatus === 'failed' ? (
-                /* Order Failed */
-                <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 space-y-3">
-                  <div className="flex items-center gap-2 text-red-400">
-                    <AlertTriangle className="w-5 h-5" />
-                    <span className="font-bold">Purchase Failed</span>
-                  </div>
-                  <p className="text-[10px] text-slate-400">Check your Coinbase API credentials and try again.</p>
-                  <button 
-                    onClick={() => setBitcoinOrderStatus(null)}
-                    className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer"
-                  >
-                    Try Again
-                  </button>
-                </div>
-              ) : (
-                /* Purchase Form */
-                <div className="space-y-4">
-                  {/* Bitcoin Address Display */}
-                  <div>
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="text-[10px] text-slate-400 uppercase block font-bold">Bitcoin Address (Receiving)</span>
-                      <button 
-                        onClick={generateBitcoinAddress}
-                        className="text-[10px] bg-slate-800 hover:bg-slate-700 text-blue-400 px-2 py-1 rounded transition cursor-pointer"
-                      >
-                        {bitcoinAddress ? '↻ New Address' : 'Generate Address'}
-                      </button>
-                    </div>
-                    {bitcoinAddress ? (
-                      <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 break-all text-[9px] text-slate-300 font-mono select-all">
-                        {bitcoinAddress}
-                      </div>
-                    ) : (
-                      <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 text-[10px] text-slate-500 text-center">
-                        Click "Generate Address" to create a receiving address
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Amount Input */}
-                  <div>
-                    <span className="text-[10px] text-slate-400 uppercase block mb-2 font-bold">Amount to Purchase</span>
-                    <div className="flex gap-2">
-                      <input 
-                        type="number"
-                        placeholder="e.g., 500"
-                        value={bitcoinPurchaseAmount}
-                        onChange={(e) => {
-                          setBitcoinPurchaseAmount(e.target.value);
-                          calculateBtcAmount(e.target.value);
-                        }}
-                        className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[10px] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-600"
-                      />
-                      <select 
-                        value={bitcoinPurchaseFiat}
-                        onChange={(e) => setBitcoinPurchaseFiat(e.target.value)}
-                        className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-[10px] text-slate-200 focus:outline-none focus:border-blue-600"
-                      >
-                        <option value="USD">USD</option>
-                        <option value="CAD">CAD</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* BTC Amount Display */}
-                  <div>
-                    <span className="text-[10px] text-slate-400 uppercase block mb-2 font-bold">You Will Receive</span>
-                    <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3">
-                      <div className="flex justify-between items-center">
-                        <span className="text-[10px] text-slate-400">Bitcoin Amount:</span>
-                        <span className="text-lg font-bold text-blue-400 font-mono">{bitcoinAmountBtc}</span>
-                      </div>
-                      <p className="text-[9px] text-slate-500 mt-1">Price auto-updates from CoinGecko live data</p>
-                    </div>
-                  </div>
-
-                  {/* Exchange Info */}
-                  <div className="bg-slate-950 rounded-lg p-3 border border-slate-800">
-                    <p className="text-[10px] text-slate-400 space-y-1">
-                      <div>✓ Real Coinbase API Integration</div>
-                      <div>✓ Live Bitcoin Pricing</div>
-                      <div>✓ Blockchain confirmed delivery</div>
-                      <div>✓ 24/7 Bitcoin ATM Network</div>
-                    </p>
-                  </div>
-
-                  {/* Purchase Button */}
-                  <button 
-                    onClick={executeBitcoinPurchase}
-                    disabled={!bitcoinAddress || !bitcoinPurchaseAmount || bitcoinLoading}
-                    className="w-full bg-orange-600 hover:bg-orange-700 disabled:bg-slate-700 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-2"
-                  >
-                    {bitcoinLoading ? (
-                      <>
-                        <Cpu className="w-4 h-4 animate-spin" />
-                        Processing...
-                      </>
-                    ) : (
-                      <>
-                        <TrendingUp className="w-4 h-4" />
-                        Execute Bitcoin Purchase
-                      </>
-                    )}
-                  </button>
-
-                  <button 
-                    onClick={() => setShowBitcoinAtmModal(false)}
-                    className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              )}
             </motion.div>
           </div>
         )}

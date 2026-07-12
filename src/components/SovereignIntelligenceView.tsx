@@ -162,7 +162,7 @@ export default function SovereignIntelligenceView({
       });
 
       await saveAuditLog(user?.uid || 'anonymous', 'YIELD_SWEEP_EXECUTED', `Executed and verified real-time yield sweep of $${currentPayoutUsd.toFixed(2)} USD to Target Address ${sovIntelState.targetYieldAddress || '0x438aE...09C'}`);
-      triggerNotification(`Yield Sweep of $${currentPayoutUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })} Successful! Tx Hash: ${randomTxHash.substring(0, 16)}...`, 'success');
+      triggerNotification(`Yield Sweep of $${currentPayoutUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })} Successful! Synced with Firebase.`, 'success');
     } catch (e) {
       console.error(e);
       triggerNotification('Error executing yield sweep', 'error');
