@@ -28,7 +28,26 @@
 
 /* Base resets */
 body {
-  background-color: #030712;
-  color: #f3f4f6;
+  background:
+    radial-gradient(1200px 600px at 15% -10%, rgba(59, 130, 246, 0.18), transparent 60%),
+    radial-gradient(1000px 540px at 90% 0%, rgba(16, 185, 129, 0.12), transparent 58%),
+    linear-gradient(180deg, #020617 0%, #0b1220 45%, #0f172a 100%);
+  color: #e5e7eb;
   font-family: var(--font-sans);
+  min-height: 100vh;
+  letter-spacing: 0.01em;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+button {
+  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+input,
+select,
+textarea {
+  transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
 }

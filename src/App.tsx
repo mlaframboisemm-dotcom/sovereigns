@@ -7810,14 +7810,14 @@ export default function App() {
           {/* RIGHT 1 COLUMN: AI STRATEGIST CO-PILOT */}
           <div className="space-y-8">
             
-            {/* SOVEREIGN GEMINI AI ADVISOR */}
+            {/* Portfolio AI Assistant */}
             <section className="bg-slate-900 border border-slate-800 rounded-2xl p-6 relative overflow-hidden">
               <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full blur-2xl"></div>
               
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
                   <Sparkles className={`w-5 h-5 text-amber-500 ${aiLoading ? 'animate-spin' : 'animate-pulse'}`} />
-                  <h3 className="text-base font-display font-bold text-white">Sovereign Wealth AI Strategy</h3>
+                  <h3 className="text-base font-display font-bold text-white">Portfolio AI Assistant</h3>
                 </div>
                 <div className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span>
@@ -7826,15 +7826,15 @@ export default function App() {
               </div>
 
               <p className="text-xs text-slate-400 leading-normal">
-                Query Gemini 3.5 AI Advisor to run a deep-dive analysis on your self-custody wallet metrics and fetch live strategic capital allocation guidance.
+                Ask for clear guidance on balances, risk, yields, and allocations in plain language.
               </p>
 
               <div className="mt-4 space-y-2">
-                <label className="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider block">Custom Intelligence Query</label>
+                <label className="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider block">Ask A Question</label>
                 <textarea
                   value={aiQuery}
                   onChange={(e) => setAiQuery(e.target.value)}
-                  placeholder="Ask a specific strategist question... e.g., 'How can I optimize our Beacon chain staking yield while keeping the keys cold?'"
+                  placeholder="Example: How can I optimize staking yield while keeping risk low?"
                   className="w-full h-20 bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500/50 resize-none transition"
                 />
                 
@@ -7844,19 +7844,19 @@ export default function App() {
                     onClick={() => setAiQuery('Analyze yield distribution & safety on Swiss Alpine accounts')}
                     className="text-[9px] font-mono bg-slate-950 hover:bg-slate-850 text-slate-400 border border-slate-850 px-2 py-1 rounded-md transition cursor-pointer"
                   >
-                    + Swiss Yields
+                    + Yield Safety
                   </button>
                   <button 
                     onClick={() => setAiQuery('Verify real-time multi-sig quorum rotation and key safety')}
                     className="text-[9px] font-mono bg-slate-950 hover:bg-slate-850 text-slate-400 border border-slate-850 px-2 py-1 rounded-md transition cursor-pointer"
                   >
-                    + Security Quorums
+                    + Key Security
                   </button>
                   <button 
                     onClick={() => setAiQuery('Draft optimal yield timeline & distribution frequencies')}
                     className="text-[9px] font-mono bg-slate-950 hover:bg-slate-850 text-slate-400 border border-slate-850 px-2 py-1 rounded-md transition cursor-pointer"
                   >
-                    + Payout Frequency
+                    + Payout Plan
                   </button>
                 </div>
               </div>
@@ -7875,7 +7875,7 @@ export default function App() {
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4 text-amber-500" />
-                    Query Portofolio Intel Report
+                    Generate Portfolio Insights
                   </>
                 )}
               </button>
