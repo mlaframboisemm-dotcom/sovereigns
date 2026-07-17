@@ -16,8 +16,30 @@ import { MailerSend, EmailParams, Sender, Recipient } from 'mailersend';
 
 dotenv.config();
 
+function firstNonEmptyEnv(keys: string[]): string {
+  for (const key of keys) {
+    const value = process.env[key];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return '';
+}
+
+function getCoinbaseCredentials() {
+  const keyId = firstNonEmptyEnv(['COINBASE_API_KEY_ID', 'CDP_API_KEY_ID', 'COINBASE_KEY_ID']);
+  const secretRaw = firstNonEmptyEnv(['COINBASE_API_SECRET_RAW', 'CDP_PRIVATE_KEY', 'COINBASE_API_SECRET', 'COINBASE_SECRET_RAW']);
+  return { keyId, secretRaw };
+}
+
+function getKrakenCredentials() {
+  const apiKey = firstNonEmptyEnv(['KRAKEN_API_KEY', 'KRAKEN_KEY']);
+  const apiSecret = firstNonEmptyEnv(['KRAKEN_API_SECRET', 'KRAKEN_API_SECRET_BASE64', 'KRAKEN_SECRET']);
+  return { apiKey, apiSecret };
+}
+
 // Initialize MailerSend client with dynamic environment configuration or fallback token
-const mailersendApiKey = process.env.MAILERSEND_API_KEY || process.env.API_KEY || "mlsn.2fe885897a93705f56e12169c0c3940baeb771ff5ef550018ad642b97e0585c1";
+const mailersendApiKey = process.env.MAILERSEND_API_KEY || process.env.API_KEY || '';
 const mailerSend = new MailerSend({
   apiKey: mailersendApiKey,
 });
@@ -36,6 +58,7 @@ if (!fs.existsSync('.env') || fs.readFileSync('.env', 'utf-8').trim() === '') {
       'COINBASE_API_SECRET_RAW',
       'KRAKEN_API_KEY',
       'KRAKEN_API_SECRET',
+      'KRAKEN_API_SECRET_BASE64',
       'MARSHALL_WALLET_PRIVATE_KEY',
       'VITE_MARSHALL_ADDRESS',
       'VITE_RPC_ETHEREUM',
@@ -1263,8 +1286,7 @@ function generateKrakenSignature(urlPath: string, nonce: string, postData: strin
  * Execute real order on Coinbase Advanced Trade v3
  */
 async function executeCoinbaseOrder(side: 'BUY' | 'SELL', symbol: string, amount: string, fiat = 'USD') {
-  const apiKeyId = process.env.COINBASE_API_KEY_ID;
-  const apiSecretRaw = process.env.COINBASE_API_SECRET_RAW;
+  const { keyId: apiKeyId, secretRaw: apiSecretRaw } = getCoinbaseCredentials();
   if (!apiKeyId || !apiSecretRaw) {
     throw new Error('COINBASE_API_KEY_ID or COINBASE_API_SECRET_RAW is not set in environment.');
   }
@@ -1310,8 +1332,7 @@ async function executeCoinbaseOrder(side: 'BUY' | 'SELL', symbol: string, amount
  * Execute real order on Kraken Private Spot API
  */
 async function executeKrakenOrder(side: 'buy' | 'sell', symbol: string, amount: string, fiat = 'USD') {
-  const apiKey = process.env.KRAKEN_API_KEY;
-  const apiSecret = process.env.KRAKEN_API_SECRET;
+  const { apiKey, apiSecret } = getKrakenCredentials();
   if (!apiKey || !apiSecret) {
     throw new Error('KRAKEN_API_KEY or KRAKEN_API_SECRET is not set in environment.');
   }
@@ -1362,8 +1383,7 @@ app.post('/api/exchanges/sync', async (req, res) => {
     let krBalances: any = null;
     let errors: string[] = [];
 
-    const cbKey = process.env.COINBASE_API_KEY_ID;
-    const cbSecret = process.env.COINBASE_API_SECRET_RAW;
+    const { keyId: cbKey, secretRaw: cbSecret } = getCoinbaseCredentials();
     let cbStatus = 'not_configured';
 
     if (cbKey && cbSecret) {
@@ -1394,8 +1414,7 @@ app.post('/api/exchanges/sync', async (req, res) => {
       errors.push('Coinbase API credentials are not configured.');
     }
 
-    const krKey = process.env.KRAKEN_API_KEY;
-    const krSecret = process.env.KRAKEN_API_SECRET;
+    const { apiKey: krKey, apiSecret: krSecret } = getKrakenCredentials();
     let krStatus = 'not_configured';
 
     if (krKey && krSecret) {
@@ -1540,8 +1559,7 @@ app.post('/api/exchanges/trade', async (req, res) => {
 
   // 1. Coinbase Execution
   if (targetExchange === 'coinbase' || targetExchange === 'all') {
-    const cbKey = process.env.COINBASE_API_KEY_ID;
-    const cbSecret = process.env.COINBASE_API_SECRET_RAW;
+    const { keyId: cbKey, secretRaw: cbSecret } = getCoinbaseCredentials();
     if (cbKey && cbSecret) {
       try {
         const orderResult = await executeCoinbaseOrder(isBuy ? 'BUY' : 'SELL', symbol, amount, fiat);
@@ -1560,8 +1578,7 @@ app.post('/api/exchanges/trade', async (req, res) => {
 
   // 2. Kraken Execution
   if (targetExchange === 'kraken' || targetExchange === 'all') {
-    const krKey = process.env.KRAKEN_API_KEY;
-    const krSecret = process.env.KRAKEN_API_SECRET;
+    const { apiKey: krKey, apiSecret: krSecret } = getKrakenCredentials();
     if (krKey && krSecret) {
       try {
         const orderResult = await executeKrakenOrder(isBuy ? 'buy' : 'sell', symbol, amount, fiat);
@@ -1638,8 +1655,7 @@ app.post('/api/exchanges/swap', async (req, res) => {
 
   // 1. Coinbase Execution
   if (targetExchange === 'coinbase' || targetExchange === 'all') {
-    const cbKey = process.env.COINBASE_API_KEY_ID;
-    const cbSecret = process.env.COINBASE_API_SECRET_RAW;
+    const { keyId: cbKey, secretRaw: cbSecret } = getCoinbaseCredentials();
     if (cbKey && cbSecret) {
       try {
         // Sell fromAsset for USD
@@ -1661,8 +1677,7 @@ app.post('/api/exchanges/swap', async (req, res) => {
 
   // 2. Kraken Execution
   if (targetExchange === 'kraken' || targetExchange === 'all') {
-    const krKey = process.env.KRAKEN_API_KEY;
-    const krSecret = process.env.KRAKEN_API_SECRET;
+    const { apiKey: krKey, apiSecret: krSecret } = getKrakenCredentials();
     if (krKey && krSecret) {
       try {
         const sellResult = await executeKrakenOrder('sell', fromAsset, amount, 'USD');
@@ -2294,10 +2309,8 @@ app.post('/api/exchanges/etransfer', async (req, res) => {
     const isWithdrawal = type === 'withdrawal';
     
     // Check if Coinbase or Kraken is configured to act as bank rails
-    const cbKey = process.env.COINBASE_API_KEY_ID;
-    const cbSecret = process.env.COINBASE_API_SECRET_RAW;
-    const krKey = process.env.KRAKEN_API_KEY;
-    const krSecret = process.env.KRAKEN_API_SECRET;
+    const { keyId: cbKey, secretRaw: cbSecret } = getCoinbaseCredentials();
+    const { apiKey: krKey, apiSecret: krSecret } = getKrakenCredentials();
     
     let executedReal = false;
     let apiResultData: any = null;

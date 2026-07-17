@@ -57,12 +57,14 @@ export interface WalletBalance {
 export interface BlockchainTransaction {
   txId: string;
   userId: string;
-  walletId: string;
+  walletId?: string;
   chain: ChainType;
   type: 'send' | 'receive';
-  fromAddress: string;
+  fromAddress?: string;
   toAddress: string;
   amount: string;
+  fee?: string;
+  gasPrice?: string;
   hash: string;
   status: 'pending' | 'confirmed' | 'failed';
   timestamp: string;

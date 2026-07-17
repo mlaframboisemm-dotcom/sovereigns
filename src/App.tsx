@@ -123,8 +123,9 @@ export const RECOVERY_SHARDS_MAP: Record<string, string> = {
 };
 
 export default function App() {
+  type AppUser = FirebaseUser & { isSandbox?: boolean };
   // Auth & Profile
-  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [user, setUser] = useState<AppUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
 
@@ -221,7 +222,7 @@ export default function App() {
     geminiHandshakeTime: string;
     sha256Verification: string;
   } | null>(null);
-  const [activeProofTab, setActiveProofTab] = useState<'transits' | 'diagnostic' | 'audit'>('transits');
+  const [activeProofTab, setActiveProofTab] = useState<'transits' | 'diagnostic' | 'audit' | 'settlement'>('transits');
   const [blockchainSyncMode, setBlockchainSyncMode] = useState<'on_chain' | 'sovereign'>('on_chain');
   const [settling, setSettling] = useState(false);
   const [settlementAnchor, setSettlementAnchor] = useState<{
@@ -1792,12 +1793,12 @@ export default function App() {
       const newTx = {
         txId,
         userId: user.uid,
-        chain: 'Ethereum',
+        chain: 'Ethereum' as ChainType,
         amount: '0.00',
         fee: '0.00045',
         toAddress: user.email || 'Treasury Archive',
         hash: data.hash,
-        status: 'completed',
+        status: 'confirmed' as const,
         type: 'send' as const,
         note: `Sovereign state anchor: ${rawStateHash.substring(0, 10)}...`,
         timestamp: new Date().toISOString(),
@@ -7862,7 +7863,7 @@ export default function App() {
 
               <button 
                 id="ai-insights-btn"
-                onClick={fetchAIAdvisorInsights}
+                onClick={() => { void fetchAIAdvisorInsights(); }}
                 disabled={aiLoading}
                 className="w-full mt-4 bg-slate-850 hover:bg-slate-800 border border-slate-750 text-white font-bold py-2.5 px-4 rounded-xl text-xs flex items-center justify-center gap-2 transition disabled:opacity-50 cursor-pointer"
               >
