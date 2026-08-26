@@ -1,26 +1,29 @@
-import {StrictMode} from 'react';
-import {createRoot} from 'react-dom/client';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { CDPReactProvider } from '@coinbase/cdp-react';
 import App from './App.tsx';
 import './index.css';
 
-// Register service worker for PWA support
-if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
+const cdpConfig = {
+  projectId: '741101fa-c2b9-4d56-97cc-08f255dfeac2',
+  appName: 'My CDP Wallet',
+  authMethods: ['email'] as ['email'],
+  ethereum: { createOnLogin: 'eoa' as const },
+  solana: { createOnLogin: true },
+};
+
+if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js')
-      .then((reg) => console.log('Sovereign PWA Service Worker registered:', reg.scope))
-      .catch((err) => console.warn('PWA Service Worker registration failed:', err));
-  });
-} else if ('serviceWorker' in navigator) {
-  // Register in dev as well to enable the download/PWA prompt criteria
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js')
-      .then((reg) => console.log('PWA Service Worker registered (development):', reg.scope))
-      .catch((err) => console.warn('PWA Service Worker registration failed:', err));
+      .then((registration) => console.log('Sovereign PWA Service Worker registered:', registration.scope))
+      .catch((error) => console.warn('PWA Service Worker registration failed:', error));
   });
 }
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <CDPReactProvider config={cdpConfig}>
+      <App />
+    </CDPReactProvider>
   </StrictMode>,
 );

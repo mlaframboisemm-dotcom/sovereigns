@@ -70,6 +70,7 @@ import {
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { jsPDF } from 'jspdf';
+import CdpWalletAccess from './components/CdpWalletAccess';
 import SovereignIntelligenceView from './components/SovereignIntelligenceView';
 import { PublicSettlementRegistryView } from './components/PublicSettlementRegistryView';
 
@@ -4841,6 +4842,8 @@ export default function App() {
             </p>
           </div>
 
+          <CdpWalletAccess />
+
           {/* Email/Password Credentials Form */}
           <div className="bg-slate-950/40 p-1 rounded-xl border border-slate-800 flex mb-5 relative">
             <button
@@ -5222,7 +5225,8 @@ export default function App() {
 
       {/* DASHBOARD GRID */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-8">
-        
+        <CdpWalletAccess />
+
         {/* TAB TOGGLE */}
         <div className="flex border-b border-slate-800 mb-8 gap-4 overflow-x-auto whitespace-nowrap">
           <button 
